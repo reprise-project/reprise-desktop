@@ -1,6 +1,6 @@
 //! Glyphs drawn from geometry at any scale: arrows, chevrons, the tick,
-//! the cross, the bullet, the plus, minus and dash bars and the speaker
-//! (sounding or crossed out), each in a `size` x `size` design-pixel box.
+//! the cross, the bullet, the plus, minus and dash bars, the speaker
+//! (sounding or crossed out) and the refresh arrow, each in a `size` x `size` design-pixel box.
 
 use super::cover::{ellipse, polygon, segments};
 use super::{Px, scale};
@@ -24,9 +24,22 @@ pub enum Glyph {
     Speaker,
     /// The speaker with a cross where the waves were.
     SpeakerMuted,
+    /// Two chevrons pointing left, one after the other.
+    ChevronsLeft,
+    /// An arrow running most of the way round a circle, clockwise, its head at the top right.
+    Refresh,
 }
 
 type Pt = (f64, f64);
+
+/// The refresh arrow's circle, as a share of the glyph's size, and the arc it runs, in degrees
+/// clockwise from the top. The head reaches `REFRESH_HEAD_DEG` past the arc and stands out
+/// `REFRESH_HEAD` of the size either side of it.
+const REFRESH_RADIUS: f64 = 0.32;
+const REFRESH_FROM: f64 = 70.0;
+const REFRESH_TO: f64 = 360.0;
+const REFRESH_HEAD_DEG: f64 = 40.0;
+const REFRESH_HEAD: f64 = 0.2;
 
 struct Shape {
     lines: Vec<Vec<Pt>>,
@@ -103,6 +116,40 @@ fn shape(g: Glyph, size: i32, weight: f64) -> Shape {
                 ]))),
             }
         }
+        Glyph::ChevronsLeft => {
+            let h = (s / 4.0).floor().max(1.0);
+            let left = ((s - 2.0 * h - 2.0) / 2.0).floor();
+            let arm = |x: f64| vec![(x + h, mid - h), (x, mid), (x + h, mid + h)];
+            lines(vec![arm(left), arm(left + h + 2.0)])
+        }
+        Glyph::Refresh => {
+            let (c, r) = (s / 2.0, s * REFRESH_RADIUS);
+            let at = |deg: f64| {
+                let a = deg.to_radians();
+                (c + r * a.sin(), c - r * a.cos())
+            };
+            let steps = 10;
+            let arc =
+                (0..=steps)
+                    .map(|i| {
+                        at(REFRESH_FROM
+                            + (REFRESH_TO - REFRESH_FROM) * f64::from(i) / f64::from(steps))
+                    })
+                    .collect();
+            // The head: a triangle across the arc's end, pointing along it.
+            let (tip, a) = (at(REFRESH_TO + REFRESH_HEAD_DEG), REFRESH_TO.to_radians());
+            let (nx, ny) = (a.sin(), -a.cos());
+            let base = at(REFRESH_TO - 4.0);
+            let k = s * REFRESH_HEAD;
+            Shape {
+                lines: vec![arc],
+                solid: Some(Solid::Polygon(vec![
+                    (base.0 + nx * k, base.1 + ny * k),
+                    tip,
+                    (base.0 - nx * k, base.1 - ny * k),
+                ])),
+            }
+        }
         Glyph::Bullet => Shape {
             lines: Vec::new(),
             solid: Some(Solid::Disc((s / 2.0, s / 2.0), s / 4.0)),
@@ -174,7 +221,7 @@ mod tests {
 
     const BLACK: Px = (255.0, [0.0; 3]);
 
-    const ALL: [Glyph; 12] = [
+    const ALL: [Glyph; 13] = [
         Glyph::ArrowUp,
         Glyph::ArrowDown,
         Glyph::ArrowLeft,
@@ -187,6 +234,7 @@ mod tests {
         Glyph::Plus,
         Glyph::Minus,
         Glyph::Dash,
+        Glyph::ChevronsLeft,
     ];
 
     fn alpha(c: &Canvas, x: i32, y: i32) -> u32 {
@@ -320,6 +368,34 @@ mod tests {
             two.pixels.iter().any(|p| (1..255).contains(&(p >> 24))),
             "the cone's flare is smooth at 2"
         );
+    }
+
+    #[test]
+    fn the_refresh_arrow_has_a_solid_head_a_ring_and_a_gap_at_the_top_right() {
+        let c = glyph(Glyph::Refresh, 13, 1, 1.5, BLACK);
+        let solid = |x0: i32, x1: i32, y0: i32, y1: i32| {
+            (x0..x1)
+                .flat_map(|x| (y0..y1).map(move |y| (x, y)))
+                .any(|(x, y)| alpha(&c, x, y) == 255)
+        };
+        assert!(solid(5, 9, 0, 4), "the head at the top");
+        assert!(solid(0, 4, 4, 9), "the ring's left side");
+        assert!(solid(4, 9, 9, 13), "the ring's bottom");
+        assert_eq!(alpha(&c, 6, 6), 0, "clear in the middle");
+        assert_eq!(alpha(&c, 11, 3), 0, "clear past the head");
+        let two = glyph(Glyph::Refresh, 13, 2, 1.5, BLACK);
+        assert!(
+            two.pixels.iter().any(|p| (1..255).contains(&(p >> 24))),
+            "the ring is smooth at 2"
+        );
+    }
+
+    #[test]
+    fn the_double_chevron_points_left_twice() {
+        let c = glyph(Glyph::ChevronsLeft, 9, 1, 1.0, BLACK);
+        let row: Vec<bool> = (0..9).map(|x| alpha(&c, x, 4) > 0).collect();
+        let runs = row.windows(2).filter(|w| !w[0] && w[1]).count() + usize::from(row[0]);
+        assert_eq!(runs, 2, "two tips on the middle row: {row:?}");
     }
 
     #[test]

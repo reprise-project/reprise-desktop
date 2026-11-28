@@ -63,6 +63,11 @@ pub enum Part {
     WellFrame,
     ComboDrop,
     ComboList,
+    /// The breadcrumb address's field over the frame's glass: Normal, Hot and Focused (editing).
+    CrumbField,
+    /// The box a breadcrumb segment, chevron or field button lights in: Hot, Pressed and
+    /// Checked (the grey of a lit box's partner).
+    CrumbButton,
     TabItem,
     TabPane,
     /// A document tab over the frame's glass: Normal, Hot and Checked (open).

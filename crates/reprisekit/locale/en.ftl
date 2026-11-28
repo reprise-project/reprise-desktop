@@ -350,6 +350,12 @@ welcome-skip = S&kip
 ## addressbar
 addressbar-address = Address
 
+## breadcrumb
+breadcrumb-overflow = Earlier Locations
+breadcrumb-chevron = Folders in { $name }
+breadcrumb-history = Previous Locations
+breadcrumb-refresh = Refresh
+
 ## calendar
 calendar-settings = Date and Time settings...
 

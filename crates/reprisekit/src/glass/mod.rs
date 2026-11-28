@@ -9,6 +9,7 @@ mod buttons;
 pub(crate) mod clock;
 mod controls;
 mod copygraph;
+mod crumbs;
 pub mod dark;
 mod doctab;
 mod fields;
@@ -600,6 +601,7 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
     let style = fields::painters()
         .into_iter()
         .chain(items::painters())
+        .chain(crumbs::painters())
         .fold(style, |st, (part, paint)| {
             st.with_painted(part, move || ink((part, paint(scale))).1)
         });
