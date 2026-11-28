@@ -860,6 +860,7 @@ fn a_compressed_folders_pictures_are_those_beside_it_by_name_in_name_order() {
         kind: reprisefs::archive::Kind::File,
         size: 1,
         modified: None,
+        mode: 0o644,
     };
     let entries = [
         entry("img10.png"),

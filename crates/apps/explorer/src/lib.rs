@@ -1851,6 +1851,7 @@ impl Explorer {
                 kind: reprisefs::archive::Kind::File,
                 size: it.size,
                 modified: it.modified,
+                mode: 0o644,
             };
             let (file, open) = (file.to_path_buf(), self.opening(false, open, how));
             let globs = self.globs.clone();
