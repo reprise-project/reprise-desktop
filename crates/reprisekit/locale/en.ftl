@@ -1211,3 +1211,8 @@ finger-name-mid =
         [right-ring-finger] right ring finger
        *[right-little-finger] right little finger
     }
+
+## detailspane
+detailspane-name = Details pane
+# name ends with its own colon ("Size:"); value is its value ("4.2 KB").
+detailspane-fact = { $name } { $value }

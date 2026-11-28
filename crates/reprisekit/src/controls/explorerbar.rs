@@ -20,6 +20,10 @@
 //! 16x14 unit, bare cold and in a 1 px `ThinRaised` ring hot. Blue's has no
 //! ring: a 22 px strip over a 1 px line, the body from the bar's edges, and
 //! a 20x17 close box against the strip's top.
+//!
+//! The navigation pane ([`nav_layout`]) is the same bar without a strip or close box: its body
+//! runs the bar's whole height on the window colour, and a look with its own panes
+//! ([`PaneLook`](crate::style::PaneLook)) draws a line down the middle of the splitter.
 
 use crate::access::accesskit::{NodeId, Role};
 use crate::access::{self, Tree};
@@ -75,6 +79,8 @@ pub struct Layout {
     ///
     /// [`TextUnits::small`]: crate::theme::TextUnits::small
     pub close_k: i32,
+    /// The navigation pane's frame ([`nav_layout`]): no strip, no close box.
+    pub nav: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +137,24 @@ pub fn layout(eb: &ExplorerBar, r: Rect, cm: &ControlMetrics) -> Layout {
         title_x,
         title_dy,
         close_k: cm.text.small(),
+        nav: false,
+    }
+}
+
+/// The navigation pane in `r` (pane and splitter): [`layout`]'s width and splitter, the body
+/// the bar's whole height, no strip or close box.
+pub fn nav_layout(eb: &ExplorerBar, r: Rect) -> Layout {
+    let width = eb.width.max(MIN_W).min((r.width - SPLITTER_W).max(0));
+    Layout {
+        frame: r,
+        header: Rect::new(r.x, r.y, width, 0),
+        close: Rect::new(r.x + width, r.y, 0, 0),
+        body: Rect::new(r.x, r.y, width, r.height),
+        splitter: Rect::new(r.x + width, r.y, SPLITTER_W, r.height),
+        title_x: 0,
+        title_dy: 0,
+        close_k: 1,
+        nav: true,
     }
 }
 
@@ -163,14 +187,17 @@ pub fn grip(lay: &Layout) -> Rect {
     )
 }
 
-/// The bar's pane, named by its title, holding its close box as a button. The host adds the
-/// body's nodes under the pane it returns.
+/// The bar's pane, named by its title, holding its close box as a button (the navigation pane
+/// has none). The host adds the body's nodes under the pane it returns.
 pub fn access(eb: &ExplorerBar, lay: &Layout, tree: &mut Tree, parent: NodeId) -> NodeId {
     let pane = tree.push(
         parent,
         "left bar",
         access::named(Role::Pane, lay.frame, &eb.title),
     );
+    if lay.nav {
+        return pane;
+    }
     let close = lay.close.intersect(&lay.frame);
     tree.push(
         pane,
@@ -192,6 +219,9 @@ pub fn draw(
     px: u32,
 ) {
     let Paint { cs, s, .. } = *p;
+    if lay.nav {
+        return draw_nav(c, p, lay);
+    }
     c.with_clip(lay.frame.scaled(s), |c| {
         let head = lay.header.scaled(s);
         let bar = Rect::new(lay.frame.x, lay.frame.y, lay.header.width, lay.frame.height);
@@ -217,6 +247,22 @@ pub fn draw(
         };
         look::draw_close(c, p, lay.close.scaled(s), ptr, lay.close_k);
     });
+}
+
+/// The navigation pane's body on the window colour and its splitter: the face colour, or the
+/// window colour with the look's line down its middle.
+fn draw_nav(c: &mut Canvas, p: &Paint, lay: &Layout) {
+    let Paint { cs, s, .. } = *p;
+    c.fill_rect(lay.body.scaled(s), cs.window);
+    let split = lay.splitter.scaled(s);
+    match p.look.style().and_then(|st| st.panes) {
+        Some(panes) => {
+            c.fill_rect(split, cs.window);
+            let line = Rect::new(split.x + (SPLITTER_W / 2 - 1) * s, split.y, s, split.height);
+            c.fill_rect(line, panes.nav_edge);
+        }
+        None => c.fill_rect(split, cs.button_face),
+    }
 }
 
 #[cfg(test)]
@@ -519,6 +565,74 @@ mod tests {
         };
         assert_eq!(ink(2), 4 * ink(1), "the Classic mark's every pixel doubles");
         crate::pins::check("explorerbar/close_text_200", &got);
+    }
+
+    #[test]
+    fn the_nav_pane_has_no_strip_or_close_box() {
+        let lay = nav_layout(&bar(), BAR);
+        assert_eq!(
+            lay.body,
+            Rect::new(0, 83, 200, 300),
+            "the body the bar's whole height"
+        );
+        assert_eq!(lay.splitter, Rect::new(SPLITTER_X, 83, 4, 300));
+        assert_eq!(hit(&lay, 10, 84), Hit::Body);
+        assert_eq!(hit(&lay, 201, 200), Hit::Splitter);
+        let mut t = Tree::window("Explorer", (400, 400));
+        let pane = access(&bar(), &lay, &mut t, access::ROOT);
+        assert_eq!(
+            t.get(pane).map(|n| n.children().len()),
+            Some(0),
+            "no close box"
+        );
+    }
+
+    /// Under Glass the splitter is the window colour with the look's line down its middle;
+    /// without a pane look it stays the face colour.
+    #[test]
+    fn the_nav_splitter_wears_the_looks_line() {
+        use crate::interface::Interface;
+        let text = TextRenderer::load(&FontConfig::default());
+        for mode in crate::glass::Mode::ALL {
+            let g = crate::glass::Settings {
+                mode,
+                ..Default::default()
+            };
+            let theme =
+                crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
+            let lay = nav_layout(&bar(), BAR);
+            let mut c = Canvas::new(204, 383);
+            draw(&mut c, &text, &theme.paint(), &bar(), &lay, 12);
+            let edge = theme
+                .look
+                .style()
+                .and_then(|st| st.panes)
+                .map(|p| p.nav_edge);
+            let (x, y) = (lay.splitter.x, 200);
+            assert_eq!(c.get(x, y), theme.colors.window.argb(), "{mode:?}");
+            assert_eq!(Some(c.get(x + 1, y)), edge.map(|e| e.argb()), "{mode:?}");
+            assert_eq!(c.get(x + 2, y), theme.colors.window.argb(), "{mode:?}");
+            assert_eq!(
+                c.get(10, 90),
+                theme.colors.window.argb(),
+                "{mode:?}: no strip"
+            );
+        }
+        let theme = Theme::default();
+        let mut c = Canvas::new(204, 383);
+        let lay = nav_layout(&bar(), BAR);
+        draw(
+            &mut c,
+            &text,
+            &classic_paint(&theme.colors, 1),
+            &bar(),
+            &lay,
+            12,
+        );
+        assert_eq!(
+            c.get(lay.splitter.x + 1, 200),
+            theme.colors.button_face.argb()
+        );
     }
 
     /// Writes target/explorerbar-blue-{blue,olive,silver}-preview.png.

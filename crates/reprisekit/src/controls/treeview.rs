@@ -35,8 +35,15 @@
 //! the row under the pointer ([`TreeView::track`]) lit; it draws no lines,
 //! and its triangle expanders show only while the pointer is in the tree or
 //! the tree has focus.
+//!
+//! `Style::Nav`, the navigation pane, holds groups as its roots with a blank row
+//! between them, every root with its expander left of its icon. A click selects a
+//! row and leaves the branches as they are. Under a boxing look its expanders fade
+//! in while the pointer is over the pane or the pane has focus, and out after
+//! ([`TreeView::show_expanders`]).
 
 use crate::access::{self, accesskit};
+use crate::anim::HoverFade;
 use crate::classic::widgets::{self, Axis, ScrollHit, axis_lit};
 use crate::classic::widgets::{
     BarHit, ScrollParts, bar_hit, draw_focus_ring, scrollbar_parts, scrollbar_pos_at,
@@ -58,6 +65,7 @@ use accesskit::{NodeId, Role};
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 /// The row pitch; the expander boxes land at row.y + 4, which `(ROW_H - BOX) / 2` gives at 17.
 pub const ROW_H: i32 = 17;
@@ -75,6 +83,18 @@ const PICKER_ROOT_ICON_X: i32 = 3;
 const PLAIN_ROW_H: i32 = 18;
 const PLAIN_ICON_X: i32 = 3;
 const PLAIN_LABEL_GAP: i32 = 5;
+/// `Style::Nav`'s row pitch, its roots' icon inset, how far each level indents and how far an
+/// expander's middle sits left of its icon.
+const NAV_ROW_H: i32 = 21;
+const NAV_ROOT_ICON_X: i32 = 20;
+const NAV_INDENT: i32 = 10;
+const NAV_EXPANDER_BACK: i32 = 9;
+/// The expander cell's left edge and width round its middle ([`item::draw_expander`]'s cell).
+const EXPANDER_CELL: (i32, i32) = (7, 16);
+/// How long `Style::Nav`'s expanders take to fade in and out, and the redraw pitch while they fade.
+pub const EXPANDER_FADE_IN_MS: u32 = 200;
+pub const EXPANDER_FADE_OUT_MS: u32 = 800;
+const FADE_FRAME: Duration = Duration::from_millis(16);
 /// How far the selection band runs left of a label and right of its text.
 const BAND_BEFORE: i32 = 2;
 const BAND_AFTER: i32 = 5;
@@ -94,11 +114,14 @@ pub enum Style {
     Picker,
     /// The share dialog's tree of screens and windows: no boxes or lines, 18 px rows, icon 3 px in, label 5 px after it.
     Plain,
+    /// The navigation pane: groups as roots a blank row apart, 21 px rows, roots' icons 20 px in
+    /// with an expander left of each icon, each level 10 px further, no edge.
+    Nav,
 }
 
 impl Style {
     fn flat(self) -> bool {
-        self == Style::Explorer
+        matches!(self, Style::Explorer | Style::Nav)
     }
 }
 
@@ -142,6 +165,13 @@ pub struct VisibleRow {
     pub last: bool,
 }
 
+impl VisibleRow {
+    /// `Style::Nav`'s blank row between two roots: no node, never hit or picked.
+    pub fn is_gap(&self) -> bool {
+        self.path.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TreeView {
     /// The scrollbar part the pointer rests on or holds, tracked by the host and lit by `draw`.
@@ -161,6 +191,8 @@ pub struct TreeView {
     /// The selection shows in the face colour, no ring, when the tree lacks focus.
     pub inactive: bool,
     pub style: Style,
+    /// `Style::Nav`'s expanders fading in or out.
+    pub expanders: ExpanderFade,
     /// The node being renamed in place and its edit, drawn as a box over its
     /// label. The host opens it ([`TreeView::begin_edit`]), feeds it keys and
     /// takes it back to commit or drop.
@@ -171,6 +203,24 @@ pub struct TreeView {
     /// `layout`'s `content_w` as last measured, keyed on a hash of its inputs,
     /// so an unchanged tree is not re-measured per pointer motion.
     content_w: Cell<Option<(u64, i32)>>,
+}
+
+/// How far `Style::Nav`'s expanders have faded in, driven by the host's clock.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ExpanderFade {
+    fade: HoverFade,
+    level: f32,
+}
+
+// The level is a clamped fraction, never NaN.
+impl Eq for ExpanderFade {}
+
+impl ExpanderFade {
+    /// 0 hidden to 1 fully shown, as of the last [`TreeView::show_expanders`] or
+    /// [`TreeView::tick_expanders`].
+    pub fn level(&self) -> f32 {
+        self.level
+    }
 }
 
 /// Where the pointer is over a tree, for a look that boxes its items.
@@ -265,13 +315,25 @@ impl TreeView {
         Some(n)
     }
 
-    /// The rows on show, depth first through the expanded nodes. Built once
-    /// per tree shape: a deep Folders pane is thousands of rows.
+    /// The rows on show, depth first through the expanded nodes, with `Style::Nav`'s gap rows
+    /// between roots. Built once per tree shape: a deep Folders pane is thousands of rows.
     pub fn visible(&self) -> Rc<Vec<VisibleRow>> {
         /// Whether `rows[*k..]` starts with what `walk` builds for `nodes` under `parent`, moving `*k` past them.
-        fn same(nodes: &[Node], parent: &[usize], rows: &[VisibleRow], k: &mut usize) -> bool {
+        fn same(
+            nodes: &[Node],
+            parent: &[usize],
+            gaps: bool,
+            rows: &[VisibleRow],
+            k: &mut usize,
+        ) -> bool {
             let n = nodes.len();
             for (i, node) in nodes.iter().enumerate() {
+                if gaps && i > 0 {
+                    if !rows.get(*k).is_some_and(VisibleRow::is_gap) {
+                        return false;
+                    }
+                    *k += 1;
+                }
                 let Some(row) = rows.get(*k) else {
                     return false;
                 };
@@ -282,15 +344,28 @@ impl TreeView {
                     return false;
                 }
                 *k += 1;
-                if node.expanded && !same(&node.children, &row.path, rows, k) {
+                if node.expanded && !same(&node.children, &row.path, false, rows, k) {
                     return false;
                 }
             }
             true
         }
-        fn walk(nodes: &[Node], path: &mut Path, depth: usize, out: &mut Vec<VisibleRow>) {
+        fn walk(
+            nodes: &[Node],
+            path: &mut Path,
+            depth: usize,
+            gaps: bool,
+            out: &mut Vec<VisibleRow>,
+        ) {
             let n = nodes.len();
             for (i, node) in nodes.iter().enumerate() {
+                if gaps && i > 0 {
+                    out.push(VisibleRow {
+                        path: Vec::new(),
+                        depth: 0,
+                        last: false,
+                    });
+                }
                 path.push(i);
                 out.push(VisibleRow {
                     path: path.clone(),
@@ -298,20 +373,21 @@ impl TreeView {
                     last: i + 1 == n,
                 });
                 if node.expanded {
-                    walk(&node.children, path, depth + 1, out);
+                    walk(&node.children, path, depth + 1, false, out);
                 }
                 path.pop();
             }
         }
+        let gaps = self.style == Style::Nav;
         let mut cached = self.rows.borrow_mut();
         if let Some(rows) = cached.as_ref() {
             let mut k = 0;
-            if same(&self.roots, &[], rows, &mut k) && k == rows.len() {
+            if same(&self.roots, &[], gaps, rows, &mut k) && k == rows.len() {
                 return rows.clone();
             }
         }
         let mut out = Vec::new();
-        walk(&self.roots, &mut Vec::new(), 0, &mut out);
+        walk(&self.roots, &mut Vec::new(), 0, gaps, &mut out);
         let rows = Rc::new(out);
         *cached = Some(rows.clone());
         rows
@@ -385,19 +461,25 @@ impl TreeView {
         let rows = self.visible();
         let row_h = lay.row_h;
         let i = self.top + ((y - lay.body.y) / row_h) as usize;
-        let Some(row) = rows.get(i) else {
+        let Some(row) = rows.get(i).filter(|r| !r.is_gap()) else {
             return Hit::Nothing;
         };
         let row_y = lay.body.y + (i - self.top) as i32 * row_h;
         let ix = lay.body.x - self.left_in(lay) + self.icon_x(row.depth, lay.icon);
         if self.has_box(row.depth) {
             let k = lay.expander;
-            let expander = Rect::new(
-                ix - indent(lay.icon) + box_x(lay.icon, k),
-                row_y,
-                k * BOX,
-                row_h,
-            );
+            let expander = match self.style {
+                Style::Nav => {
+                    let (back, w) = EXPANDER_CELL;
+                    Rect::new(ix - (NAV_EXPANDER_BACK + back) * k, row_y, w * k, row_h)
+                }
+                _ => Rect::new(
+                    ix - indent(lay.icon) + box_x(lay.icon, k),
+                    row_y,
+                    k * BOX,
+                    row_h,
+                ),
+            };
             if expander.contains(x, y) {
                 let node = self.node(&row.path);
                 if node.is_some_and(|n| n.has_children) {
@@ -416,13 +498,15 @@ impl TreeView {
     pub fn row_h(&self, cm: &ControlMetrics) -> i32 {
         cm.text.len(match self.style {
             Style::Plain => PLAIN_ROW_H,
+            Style::Nav => NAV_ROW_H,
             _ => ROW_H,
         })
     }
 
     /// Where a row's icon starts inside the body, its column `icon` wide: `Classic`
     /// keeps an expander column left of the roots, `Explorer` does not (root icon at
-    /// `body.x + 4`), `Picker` puts the root's at `body.x + 3`, `Plain` puts it 3 px in.
+    /// `body.x + 4`), `Picker` puts the root's at `body.x + 3`, `Plain` puts it 3 px in. `Nav`'s
+    /// root icon moves right as much as the icon grows, so its grown expander keeps its room.
     fn icon_x(&self, depth: usize, icon: i32) -> i32 {
         let indent = indent(icon);
         match self.style {
@@ -430,6 +514,10 @@ impl TreeView {
             Style::Explorer => ROOT_ICON_X + depth as i32 * indent,
             Style::Picker => PICKER_ROOT_ICON_X + depth as i32 * indent,
             Style::Plain => PLAIN_ICON_X + depth as i32 * indent,
+            Style::Nav => {
+                let grow = icon - ICON_PX;
+                NAV_ROOT_ICON_X + grow + depth as i32 * (NAV_INDENT + grow / 2)
+            }
         }
     }
 
@@ -437,7 +525,7 @@ impl TreeView {
     /// rows, none in `Plain`'s 18 px ones, so capitals start 5 px below the top in both.
     fn label_dy(&self) -> i32 {
         match self.style {
-            Style::Plain => 0,
+            Style::Plain | Style::Nav => 0,
             _ => 1,
         }
     }
@@ -445,7 +533,7 @@ impl TreeView {
     fn label_x(&self, depth: usize, icon: i32) -> i32 {
         let gap = match self.style {
             Style::Classic => LABEL_GAP,
-            Style::Explorer | Style::Picker => EXPLORER_LABEL_GAP,
+            Style::Explorer | Style::Picker | Style::Nav => EXPLORER_LABEL_GAP,
             Style::Plain => PLAIN_LABEL_GAP,
         };
         self.icon_x(depth, icon) + icon + gap
@@ -461,15 +549,32 @@ impl TreeView {
     /// Whether this depth gets an expander column: Explorer draws no box on a root, `Plain` never does.
     fn has_box(&self, depth: usize) -> bool {
         match self.style {
-            Style::Classic => true,
+            Style::Classic | Style::Nav => true,
             Style::Explorer | Style::Picker => depth > 0,
             Style::Plain => false,
         }
     }
 
-    /// Whether the rows answer the pointer as the shell's trees do: hot labels and a click that opens the row.
+    /// Whether the rows answer the pointer as the shell's trees do: hot labels, and but for
+    /// `Nav` a click that opens the row ([`TreeView::click_row`]).
     pub fn tracks(&self) -> bool {
-        matches!(self.style, Style::Explorer | Style::Picker)
+        matches!(self.style, Style::Explorer | Style::Picker | Style::Nav)
+    }
+
+    /// Fade `Style::Nav`'s expanders in while `shown` (the pointer over the pane, or the pane
+    /// focused) and out after. Gives the time to redraw at while they fade, as
+    /// [`TreeView::tick_expanders`] does.
+    pub fn show_expanders(&mut self, shown: bool, now: Instant) -> Option<Instant> {
+        let f = &mut self.expanders.fade;
+        f.set(shown, now, EXPANDER_FADE_IN_MS, EXPANDER_FADE_OUT_MS);
+        self.tick_expanders(now)
+    }
+
+    /// The expanders' fade at `now`: the time to redraw at while it runs, `None` once settled.
+    pub fn tick_expanders(&mut self, now: Instant) -> Option<Instant> {
+        let f = &mut self.expanders;
+        f.level = f.fade.level(now);
+        (!f.fade.settled(now)).then(|| now + FADE_FRAME)
     }
 
     /// The pointer moved to (`x`, `y`): the row whose icon or label it is on turns hot. True when drawing changed.
@@ -492,11 +597,12 @@ impl TreeView {
     /// ([`TreeView::over`]); a host under a boxing look calls this beside
     /// [`TreeView::hover`]. True when that changed.
     pub fn track(&mut self, lay: &Layout, x: i32, y: i32) -> bool {
+        let rows = self.visible();
         let row = lay
             .body
             .contains(x, y)
             .then(|| self.top + ((y - lay.body.y) / lay.row_h) as usize)
-            .filter(|&i| i < self.visible().len());
+            .filter(|&i| rows.get(i).is_some_and(|r| !r.is_gap()));
         let over = Over {
             inside: lay.frame.contains(x, y),
             row,
@@ -519,14 +625,14 @@ impl TreeView {
     }
 
     /// A click on visible row `i`'s icon or label: select it, and in a tree
-    /// that tracks the pointer open it too, closing the old selection and its
+    /// that tracks the pointer (but `Nav`) open it too, closing the old selection and its
     /// ancestors up to one the new row sits under. Returns the path to fill
     /// when the row opened with no children loaded.
     pub fn click_row(&mut self, i: usize, lay: &Layout) -> Option<Path> {
         let rows = self.visible();
-        let new = rows.get(i)?.path.clone();
+        let new = rows.get(i).filter(|r| !r.is_gap())?.path.clone();
         let old = self.selected.clone();
-        let tracks = self.tracks();
+        let tracks = self.tracks() && self.style != Style::Nav;
         if tracks && let Some(old) = old.filter(|o| !new.starts_with(o)) {
             for depth in (1..=old.len()).rev() {
                 let up = &old[..depth];
@@ -570,7 +676,7 @@ impl TreeView {
 
     pub fn select(&mut self, i: usize, lay: &Layout) -> bool {
         let rows = self.visible();
-        let Some(row) = rows.get(i) else {
+        let Some(row) = rows.get(i).filter(|r| !r.is_gap()) else {
             return false;
         };
         let changed = self.selected.as_ref() != Some(&row.path);
@@ -619,9 +725,13 @@ impl TreeView {
     /// Move the selection `step` visible rows (Home / End with a big step); turns the focus ring on.
     pub fn step(&mut self, step: i64, lay: &Layout) -> bool {
         let rows = self.visible();
-        let Some(to) = step_index(self.selected_row(&rows), step, rows.len()) else {
+        let Some(mut to) = step_index(self.selected_row(&rows), step, rows.len()) else {
             return false;
         };
+        // A gap row is never first or last: step on over it.
+        if rows[to].is_gap() {
+            to = if step < 0 { to - 1 } else { to + 1 };
+        }
         let changed = self.selected.as_ref() != Some(&rows[to].path) || !self.focus_ring;
         self.selected = Some(rows[to].path.clone());
         self.focus_ring = true;
@@ -851,6 +961,10 @@ pub fn draw(
             open_levels.push(row.path[d] + 1 < siblings);
         }
     }
+    // `Nav`'s expanders, laid over the rows at their fade's level.
+    let level = tv.expanders.level();
+    let mut fading = (tv.style == Style::Nav && level > 0.0)
+        .then(|| bc.scratch(body.width.max(0) as u32, body.height.max(0) as u32));
     for k in 0..lay.rows {
         let i = tv.top + k;
         let Some(row) = rows.get(i) else {
@@ -864,8 +978,11 @@ pub fn draw(
         };
         open_levels.resize(row.depth + 1, false);
         open_levels[row.depth] = !row.last;
-        let bx = ix - (indent(lay.icon) - box_x(lay.icon, lay.expander)) * s;
-        let cx = bx + (BOX / 2) * g;
+        let cx = match tv.style {
+            Style::Nav => ix - NAV_EXPANDER_BACK * g,
+            _ => ix - (indent(lay.icon) - box_x(lay.icon, lay.expander)) * s + (BOX / 2) * g,
+        };
+        let bx = cx - (BOX / 2) * g;
         let selected = tv.selected.as_ref() == Some(&row.path);
         let drop = tv.drop_hilight == Some(i);
         // A boxing look boxes the row across the body, 1 px in from either side, draws no lines, shows expanders only while the pointer is in the tree or it has focus, and leaves the label as is.
@@ -881,9 +998,14 @@ pub fn draw(
             },
         );
         if boxed {
-            let shown = tv.over.inside || (!tv.inactive && p.active);
-            if node.has_children && tv.has_box(row.depth) && shown {
-                let hot = tv.over.row == Some(i) && tv.over.expander;
+            let hot = tv.over.row == Some(i) && tv.over.expander;
+            let opens = node.has_children && tv.has_box(row.depth);
+            if let Some(layer) = fading.as_mut().filter(|_| opens) {
+                item::draw_expander(layer, p, (cx, mid), node.expanded, hot);
+            } else if opens
+                && tv.style != Style::Nav
+                && (tv.over.inside || (!tv.inactive && p.active))
+            {
                 item::draw_expander(&mut bc, p, (cx, mid), node.expanded, hot);
             }
         } else if tv.style == Style::Classic {
@@ -970,6 +1092,9 @@ pub fn draw(
         } else {
             text.draw(&mut bc, tr, &shown, false, cs.button_text, Align::Left, px);
         }
+    }
+    if let Some(layer) = fading {
+        bc.blit_over_faded(0, 0, &layer, (level * 255.0).round() as u32, 255);
     }
     if let (Some(b), Some((_, ed))) = (tv.edit_rect(lay, text, px), &tv.edit) {
         let b = Rect::new(b.x - lay.body.x, b.y - lay.body.y, b.width, b.height).scaled(s);
@@ -1095,5 +1220,7 @@ fn ancestors(rows: &[VisibleRow], i: usize) -> Vec<usize> {
     out
 }
 
+#[cfg(test)]
+mod nav_tests;
 #[cfg(test)]
 mod tests;

@@ -74,6 +74,8 @@ mod fit_test;
 mod glass;
 #[path = "gallery/glass_controls.rs"]
 mod glass_controls;
+#[path = "gallery/glass_panes.rs"]
+mod glass_panes;
 #[path = "gallery/glass_shell.rs"]
 mod glass_shell;
 #[path = "gallery/interfaces.rs"]
@@ -209,6 +211,10 @@ fn write_scale(n: i32) {
     write_preview(
         || gallery_keys::key_sheet(n.max(1)),
         &format!("reprisekit-gallery-key-sheet@{}.png", n.max(1)),
+    );
+    write_preview(
+        || glass_panes::render_glass_panes(n.max(1)),
+        &format!("reprisekit-gallery-glass-panes@{}.png", n.max(1)),
     );
     write_preview(
         || gallery_power::render(n.max(1)),
@@ -505,6 +511,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
     write_preview(|| render_image_view(1), "reprisekit-gallery-imageview.png");
     write_preview(|| render_grid_drag(1), "reprisekit-gallery-grid-drag.png");
     write_preview(|| render_drives(1), "reprisekit-gallery-drives.png");
+    write_preview(
+        || glass_panes::render_glass_panes(1),
+        "reprisekit-gallery-glass-panes.png",
+    );
     write_preview(
         || render_label_ellipsis(1),
         "reprisekit-gallery-label-ellipsis.png",

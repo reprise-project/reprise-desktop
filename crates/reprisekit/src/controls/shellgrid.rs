@@ -7,6 +7,7 @@ use crate::controls::shellview::{Entry, Group, Layout, Mode, ShellView, draw_wra
 use crate::look::widgets::item;
 use crate::look::{self, Paint};
 use crate::raster::{Canvas, Rect};
+use crate::style::PaneLook;
 use crate::text::{Align, TextRenderer};
 use crate::textedit::Caret;
 use crate::theme::{TextUnits, Theme};
@@ -47,6 +48,11 @@ pub(crate) const GROUP_LINE_W: i32 = 305;
 pub(crate) const GRID_TOP: i32 = 4;
 pub(crate) const TILE_TOP: i32 = 2;
 pub(crate) const LINE_PITCH: i32 = 13;
+/// A look with its own group headings ([`PaneLook`]): the collapse triangle's middle and the
+/// title's left edge in from the heading's left, and the gaps either side of the rule.
+const HEADING_TRIANGLE_X: i32 = 8;
+const HEADING_TEXT_X: i32 = 20;
+const HEADING_RULE_GAP: i32 = 8;
 
 /// An icon mode's flow at a text size: the cells' text and the group headers grow by `u`, icons and air stay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -364,6 +370,41 @@ pub(crate) fn draw_thumb(
     }
 }
 
+/// A group heading under a look with its own ([`PaneLook`]), in the already-scaled `r`: an open
+/// collapse triangle, the title in the heading ink in `title_box` (top offset, height), and the
+/// look's rule from past the title to the heading's right end.
+#[allow(clippy::too_many_arguments)]
+fn draw_heading(
+    c: &mut Canvas,
+    text: &TextRenderer,
+    p: &Paint,
+    panes: &PaneLook,
+    r: Rect,
+    title: &str,
+    (top, h): (i32, i32),
+    px: u32,
+) {
+    let s = p.s;
+    let line = Rect::new(r.x, r.y + top, r.width, h);
+    let mid = line.y + line.height / 2;
+    item::draw_expander(c, p, (r.x + HEADING_TRIANGLE_X * s, mid), true, false);
+    let x = r.x + HEADING_TEXT_X * s;
+    let room = (r.right() - x - HEADING_RULE_GAP * s).max(0);
+    let shown = text.ellipsize(title, room, false, px);
+    let tr = Rect::new(x, line.y, room, line.height);
+    text.draw(c, tr, &shown, false, panes.heading, Align::Left, px);
+    let from = x + text.measure(&shown, false, px) + HEADING_RULE_GAP * s;
+    let rule = Rect::new(
+        from,
+        line.y,
+        r.right() - HEADING_RULE_GAP * s - from,
+        line.height,
+    );
+    if rule.width > 0 {
+        (panes.heading_rule)(c, rule, s * c.scale());
+    }
+}
+
 /// The three icon modes' body, into a canvas of its own so a cell scrolled past an edge clips.
 pub(crate) fn draw_grid(
     c: &mut Canvas,
@@ -386,13 +427,18 @@ pub(crate) fn draw_grid(
         let r = off(*h);
         if !r.intersect(&all).is_empty() {
             let title_box = (u.len(GROUP_TITLE_Y) * s, px as i32 + u.len(3) * s);
-            let rule = GroupRule {
-                from: cs.gradient_active_title,
-                to: cs.window,
-                width: GROUP_LINE_W,
-                y: u.len(GROUP_RULE_Y),
-            };
-            draw_group_header(&mut bc, text, cs, r, &g.title, title_box, &rule, px, s);
+            match p.look.style().and_then(|st| st.panes) {
+                Some(panes) => draw_heading(&mut bc, text, p, &panes, r, &g.title, title_box, px),
+                None => {
+                    let rule = GroupRule {
+                        from: cs.gradient_active_title,
+                        to: cs.window,
+                        width: GROUP_LINE_W,
+                        y: u.len(GROUP_RULE_Y),
+                    };
+                    draw_group_header(&mut bc, text, cs, r, &g.title, title_box, &rule, px, s);
+                }
+            }
         }
     }
     let theme = Theme::for_draw(p, px);
@@ -1110,6 +1156,90 @@ mod tests {
     }
 
     /// `sv` laid out and drawn in Classic at `pct` text size, with the size's controls and font.
+    /// Two tiles under a "Hard Disk Drives" heading in Glass `mode`, drawn at scale `s`; the
+    /// canvas and the heading's rect in its device px.
+    fn glass_heading(mode: crate::glass::Mode, s: i32) -> (Canvas, Rect, Theme) {
+        let g = crate::glass::Settings {
+            mode,
+            ..Default::default()
+        };
+        let theme = crate::interfaces::theme_with(
+            crate::interface::Interface::Glass,
+            Default::default(),
+            false,
+            &g,
+        );
+        let mut sv = iconed(2, Mode::Tiles);
+        sv.groups = vec![Group {
+            title: "Hard Disk Drives".into(),
+            first: 0,
+        }];
+        let r = Rect::new(0, 0, 500, 120);
+        let lay = layout(&sv, r, &theme.controls());
+        let t = theme.scaled(s);
+        let text = TextRenderer::load(&t.fonts);
+        let mut c = Canvas::new((r.width * s) as u32, (r.height * s) as u32);
+        crate::controls::shellview::draw(
+            &mut c,
+            &text,
+            &t.paint(),
+            &sv,
+            &lay,
+            None,
+            t.fonts.size_px,
+        );
+        (c, lay.headers[0].scaled(s), t)
+    }
+
+    /// The rule's ink, read off the look's painter.
+    fn panes_rule(panes: &PaneLook) -> u32 {
+        let mut c = Canvas::new(4, 3);
+        (panes.heading_rule)(&mut c, Rect::new(0, 0, 4, 3), 1);
+        c.get(1, 1) & 0xFF_FFFF
+    }
+
+    #[test]
+    fn group_headings_draw_blue_with_a_rule_and_triangle() {
+        crate::pins::fonts();
+        let mut got = Vec::new();
+        for mode in crate::glass::Mode::ALL {
+            for s in [1, 2] {
+                let (c, h, t) = glass_heading(mode, s);
+                let panes = t.look.style().and_then(|st| st.panes).expect("Glass panes");
+                let rows = h.y..h.bottom();
+                let c = &c;
+                let at = |x: i32| rows.clone().map(move |y| c.get(x, y) & 0xFF_FFFF);
+                let heading = panes.heading.argb() & 0xFF_FFFF;
+                let title = (h.x + HEADING_TEXT_X * s..h.x + (HEADING_TEXT_X + 60) * s)
+                    .flat_map(at)
+                    .any(|v| v == heading);
+                assert!(title, "{mode:?} at {s}: the title in the heading ink");
+                let window = t.colors.window.argb() & 0xFF_FFFF;
+                let ruled = |x: i32| at(x).filter(|&v| v != window).count();
+                assert_eq!(
+                    ruled(h.x + 250 * s),
+                    s as usize,
+                    "{mode:?} at {s}: one design row"
+                );
+                let rule = panes_rule(&panes);
+                let near = |x: i32| at(x).find(|&v| v != window);
+                assert_eq!(
+                    near(h.x + 250 * s),
+                    Some(rule),
+                    "{mode:?} at {s}: the rule's ink"
+                );
+                let end = h.right() - (HEADING_RULE_GAP + 1) * s;
+                assert_eq!(near(end), Some(rule), "{mode:?} at {s}: to the right end");
+                let tri = (h.x..h.x + HEADING_TEXT_X * s)
+                    .flat_map(at)
+                    .any(|v| v != window);
+                assert!(tri, "{mode:?} at {s}: the collapse triangle");
+                got.push((format!("{mode:?} {s}"), crate::pins::fnv(c)));
+            }
+        }
+        crate::pins::check("controls/shellgrid_glass_heading", &got);
+    }
+
     fn render_at(sv: &ShellView, r: Rect, pct: u32) -> (Canvas, Layout, Theme) {
         let theme = Theme::default().with_text_size(pct);
         let text = TextRenderer::load(&theme.fonts);
