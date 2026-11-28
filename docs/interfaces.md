@@ -6,7 +6,7 @@ Set `[appearance] interface` to `"classic"` (default), `"blue"` or `"glass"`, or
 
 `[appearance] mode` (Settings > Appearance > Mode) is one switch for every interface: `"light"` (default), `"dark"`, `"night"` (dark from sunset to sunrise, or between night light's fixed times, whether or not night light is on) or `"hours"` (dark from `dark_from` to `dark_to`). A scheduled mode switches by itself; picking Light or Dark ends the schedule.
 
-- Classic wears `dark_color_scheme` while dark (a dark Classic scheme, default One Dark; a High Contrast user picks High Contrast Black there to keep high contrast), Blue its scheme's dark twin, Glass dark glass. `[colors]` overrides apply over the dark colours too.
+- Classic wears `dark_color_scheme` while dark (a dark Classic scheme, default One Dark; a High Contrast user picks High Contrast Black there to keep high contrast), Blue's own scheme its dark twin (the nine other Blue schemes stay light), Glass dark glass. `[colors]` overrides apply over the dark colours too.
 - A dark Classic `color_scheme` in light mode also reads as dark to programs and the portal.
 - Programs' pages, lists, editors and backdrops take the dark window colour; Paint's picture keeps its own colours. On a dark list, menu, toolbar or dialog an icon whose outline would vanish gets a thin light halo, and a single-grey symbolic icon too dark to read is drawn in the text colour.
 - Running programs, the taskbar and open windows switch live. The portal tells GTK, Qt and browsers (`org.freedesktop.appearance` color-scheme), the generated GTK and Qt themes are rewritten, and `[toolkits] gtk_theme = "auto"` picks Adwaita-dark.
@@ -35,7 +35,7 @@ Glossy frames with a 26 px caption, bold shadowed white titles, a 30 px gradient
 
 Blue's two-column Start menu shows your user picture at the top, pinned/frequent apps and All Programs on the left, folders and system items on the right, and Log Off / Turn Off Computer at the bottom. Type a letter to jump to a row. The lock screen shows your user tile open for a password.
 
-Blue has ten light schemes: Blue (default), Olive Green, Silver, Slate, Sapphire, Obsidian, Ember, Cobalt, Carbon and Steel.
+Blue has ten schemes: Blue (default, with a dark twin for [dark mode](#dark-mode)), Olive Green, Silver, Slate, Sapphire, Obsidian, Ember, Cobalt, Carbon and Steel.
 
 Caption titles use Trebuchet MS and the Start button uses Franklin Gothic Medium ([assets.md](assets.md#fonts)).
 
