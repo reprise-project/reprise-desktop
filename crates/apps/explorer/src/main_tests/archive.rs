@@ -452,6 +452,12 @@ fn locked() -> (tempfile::TempDir, PathBuf) {
 
 /// Types `typed` into the password box up and presses Enter.
 fn give_password(ex: &mut Explorer, typed: &str, ctx: &mut Ctx) {
+    type_in(ex, typed, ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), ctx);
+}
+
+/// Types `typed` into the field of the box up that has the focus.
+fn type_in(ex: &mut Explorer, typed: &str, ctx: &mut Ctx) {
     for ch in typed.chars() {
         let utf8 = ch.to_string();
         let edit = reprisekit::textedit::key_for(ch as u32, false, false, Some(&utf8));
@@ -463,7 +469,6 @@ fn give_password(ex: &mut Explorer, typed: &str, ctx: &mut Ctx) {
         };
         ex.dialog_event(Event::Key(key), ctx);
     }
-    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), ctx);
 }
 
 /// The status line of the password box up, and what it opens.
@@ -582,4 +587,79 @@ fn extract_all_of_an_encrypted_zip_asks_its_password_until_one_opens_it() {
         std::fs::read_to_string(to.join("locked/a.txt")).expect("extracted"),
         "secret"
     );
+}
+
+/// Types `first` and `again` into Add a Password's two fields and presses Enter.
+fn give_twice(ex: &mut Explorer, first: &str, again: &str, ctx: &mut Ctx) {
+    type_in(ex, first, ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::TAB)), ctx);
+    type_in(ex, again, ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::RETURN)), ctx);
+}
+
+/// Add a Password... on `zip`, in a window on its folder, until its box is up.
+fn adding_password(zip: &std::path::Path, ctx: &mut Ctx) -> Explorer {
+    use crate::zipkey::Unlocks;
+    let dir = zip.parent().expect("a folder").to_path_buf();
+    let mut ex = test_explorer(Place::Folder(dir), ctx);
+    ex.select_paths(&[zip.to_path_buf()]);
+    ex.run(Command::AddPassword, ctx);
+    wake_until(
+        &mut ex,
+        ctx,
+        |ex| matches!(password_box(ex), Some((_, Unlocks::AddKey(z))) if z == zip),
+    );
+    ex
+}
+
+#[test]
+fn add_a_password_refuses_two_that_differ_then_encrypts_the_zip_with_the_one_typed_twice() {
+    let (_dir, zip) = pack();
+    let before = std::fs::read(&zip).expect("read");
+    let mut ctx = test_ctx();
+    let mut ex = adding_password(&zip, &mut ctx);
+    give_twice(&mut ex, "pw", "px", &mut ctx);
+    assert!(
+        password_box(&ex).is_some_and(|(s, _)| s == "The passwords do not match. Type them again."),
+        "the box says they differ"
+    );
+    assert!(ex.extracting.is_none(), "no job started");
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+
+    give_twice(&mut ex, "pw", "pw", &mut ctx);
+    assert!(ex.dialog().is_none(), "the box went");
+    ex.finish_extracts(reprisefs::progress::Decision::Abort, &mut ctx);
+    assert!(reprisefs::archive::zip_encrypted(&zip));
+    let out = std::process::Command::new("bsdtar")
+        .arg("-xOf")
+        .arg(&zip)
+        .args(["--passphrase", "pw", "top.txt"])
+        .output()
+        .expect("bsdtar runs");
+    assert!(out.status.success());
+    assert_eq!(out.stdout, b"top", "the password typed twice opens it");
+}
+
+#[test]
+fn a_cancelled_add_a_password_writes_nothing_and_a_zip_with_one_says_so() {
+    let (_dir, zip) = pack();
+    let before = std::fs::read(&zip).expect("read");
+    let mut ctx = test_ctx();
+    let mut ex = adding_password(&zip, &mut ctx);
+    type_in(&mut ex, "pw", &mut ctx);
+    ex.dialog_event(Event::Key(key_in(keysym::ESCAPE)), &mut ctx);
+    assert!(
+        ex.dialog().is_none() && ex.extracting.is_none(),
+        "Cancel starts no job"
+    );
+    assert_eq!(std::fs::read(&zip).expect("read"), before);
+
+    let (dir, locked) = locked();
+    let mut ex = test_explorer(Place::Folder(dir.path().to_path_buf()), &mut ctx);
+    ex.select_paths(&[locked]);
+    ex.run(Command::AddPassword, &mut ctx);
+    wake_until(&mut ex, &mut ctx, |ex| {
+        matches!(ex.dialog(), Some(Dialog::Message { text, .. })
+            if text == "'locked.zip' already has a password.")
+    });
 }

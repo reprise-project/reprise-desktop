@@ -8,7 +8,7 @@ use crate::props_dialog::{ADV_CANCEL, ADV_OK, ATTR_CANCEL, ATTR_OK, ATTR_SIZE, A
 use crate::zipkey::Unlocks;
 use crate::{BTN_LEFT, Explorer};
 use repriseapp::filedlg::Host;
-use repriseapp::unlock::{self, Unlock};
+use repriseapp::unlock::Unlock;
 use repriseapp::{Caption, Child, Ctx, Event, PointerInput, Reply, WinId};
 use reprisekit::controls::aboutbox;
 use reprisekit::controls::browsefolder;
@@ -1016,7 +1016,7 @@ impl Explorer {
                     Dialog::About(..) => u.size(aboutbox::CLIENT),
                     Dialog::Browse(_) => browsefolder::client(&self.forms.controls()),
                     Dialog::ChooseProgram(_) => openwith::client(&self.forms.controls()),
-                    Dialog::Unlock(..) => u.size(unlock::CLIENT),
+                    Dialog::Unlock(b, _) => u.size(b.design_size()),
                     Dialog::BatchRename(_) => u.size(reprisekit::controls::batchrename::CLIENT),
                     Dialog::NewShortcut(_) => u.size(reprisekit::controls::newshortcut::CLIENT),
                     Dialog::AddFavorite(_) => u.size(reprisekit::controls::namebox::CLIENT),

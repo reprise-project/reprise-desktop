@@ -81,6 +81,11 @@ archive-update-too-large = it holds { $size }, more than the { $most } a save wr
 archive-update-too-long = it took too long to rewrite.
 archive-update-mismatch = the rewritten copy did not hold what it should, so it was left as it was.
 archive-update-changed = it changed while it was being rewritten, so it was left as it was.
+archive-key-failed = Cannot add a password to { $name }: { $why }
+archive-key-has-one = it already has a password.
+archive-key-no-files = it holds no files with anything in them for a password to protect.
+archive-key-linked = it has other links to it, which would keep it without a password.
+archive-key-links = it holds links or special files, which a password cannot protect.
 extract-list-too-long = it took too long to read.
 extract-too-long = it took too long to extract.
 

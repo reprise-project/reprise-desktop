@@ -1,6 +1,6 @@
 //! Unlock Drive: the passphrase box for a locked drive, raised when it is
 //! plugged in and when it is opened from Computer. Explorer raises it with its own [`Words`]
-//! for an encrypted zip's password.
+//! for an encrypted zip's password, and with a [`Confirm`] field for a password it sets.
 
 use std::cell::Cell;
 
@@ -32,6 +32,10 @@ const FIELD_H: i32 = 20;
 const LABEL_DY: i32 = 3;
 const STATUS_Y: i32 = 89;
 const BTN_Y: i32 = CLIENT.1 - 12 - BUTTON_H;
+/// How far the confirm field sits below the first, and how much it grows the box.
+const CONFIRM_DY: i32 = 28;
+/// The client size of a box with a [`Confirm`] field.
+pub const CONFIRM_CLIENT: (i32, i32) = (CLIENT.0, CLIENT.1 + CONFIRM_DY);
 const CANCEL_X: i32 = CLIENT.0 - 12 - BUTTON_W;
 const OK_X: i32 = CANCEL_X - 6 - BUTTON_W;
 
@@ -52,6 +56,16 @@ pub struct Words {
     pub title: String,
     pub message: String,
     pub label: String,
+    /// A second field for a box setting a passphrase, which OK takes only when both match.
+    pub confirm: Option<Confirm>,
+}
+
+/// The words of a passphrase box's second field.
+#[derive(Clone, Debug)]
+pub struct Confirm {
+    pub label: String,
+    /// The status line when the two fields differ.
+    pub mismatch: String,
 }
 
 impl Words {
@@ -61,6 +75,7 @@ impl Words {
             title: title(),
             message: message(name),
             label: reprisekit::tr!("unlock-label"),
+            confirm: None,
         }
     }
 }
@@ -165,7 +180,17 @@ impl Unlock {
 
     pub fn new(volume: String, words: Words, lines: &[String], icon: Option<Canvas>) -> Unlock {
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
-        let items = vec![
+        let dy = if words.confirm.is_some() {
+            CONFIRM_DY
+        } else {
+            0
+        };
+        let secret = || Control::Edit {
+            edit: TextEdit::secret(),
+            first: Cell::new(0),
+            enabled: true,
+        };
+        let mut items = vec![
             Item::picture("icon", ICON, icon),
             Item::lines(
                 "message",
@@ -180,33 +205,45 @@ impl Unlock {
             Item::new(
                 "passphrase",
                 Rect::new(FIELD_X, FIELD_Y, FIELD_W, FIELD_H),
-                Control::Edit {
-                    edit: TextEdit::secret(),
-                    first: Cell::new(0),
-                    enabled: true,
-                },
+                secret(),
             ),
+        ];
+        if let Some(confirm) = &words.confirm {
+            items.extend([
+                Item::label(
+                    "confirm_l",
+                    Rect::new(LABEL_X, FIELD_Y + dy + LABEL_DY, 100, LINE_H),
+                    &confirm.label,
+                ),
+                Item::new(
+                    "confirm",
+                    Rect::new(FIELD_X, FIELD_Y + dy, FIELD_W, FIELD_H),
+                    secret(),
+                ),
+            ]);
+        }
+        items.extend([
             Item::label(
                 "status",
-                Rect::new(LABEL_X, STATUS_Y, CLIENT.0 - LABEL_X - 16, LINE_H),
+                Rect::new(LABEL_X, STATUS_Y + dy, CLIENT.0 - LABEL_X - 16, LINE_H),
                 "",
             )
             .live(),
             Item::button(
                 "ok",
-                Rect::new(OK_X, BTN_Y, BUTTON_W, BUTTON_H),
+                Rect::new(OK_X, BTN_Y + dy, BUTTON_W, BUTTON_H),
                 &reprisekit::kit_tr!("ok"),
                 false,
                 true,
             ),
             Item::button(
                 "cancel",
-                Rect::new(CANCEL_X, BTN_Y, BUTTON_W, BUTTON_H),
+                Rect::new(CANCEL_X, BTN_Y + dy, BUTTON_W, BUTTON_H),
                 &reprisekit::kit_tr!("cancel"),
                 true,
                 false,
             ),
-        ];
+        ]);
         let mut form = Form::new(items);
         form.focus_id("passphrase");
         Unlock {
@@ -229,13 +266,24 @@ impl Unlock {
                 if !self.can_submit() {
                     return Outcome::None;
                 }
+                if let Some(confirm) = &self.words.confirm
+                    && self.form.edit_text("confirm") != self.passphrase()
+                {
+                    let mismatch = confirm.mismatch.clone();
+                    self.wipe();
+                    self.fail(&mismatch);
+                    return Outcome::Redraw;
+                }
                 let pass = self.take();
                 self.busy = true;
                 self.form.set_text("status", "");
                 self.sync_ok();
                 Outcome::Submit(pass)
             }
-            form::Event::Pressed("cancel") | form::Event::Cancel => Outcome::Cancel,
+            form::Event::Pressed("cancel") | form::Event::Cancel => {
+                self.wipe();
+                Outcome::Cancel
+            }
             form::Event::Redraw => Outcome::Redraw,
             _ => Outcome::None,
         }
@@ -244,7 +292,10 @@ impl Unlock {
     /// An event on the box's window; the close box is Cancel.
     pub fn input(&mut self, ev: Event, ctx: &mut Ctx) -> Outcome {
         match ev {
-            Event::CloseRequest => Outcome::Cancel,
+            Event::CloseRequest => {
+                self.wipe();
+                Outcome::Cancel
+            }
             // The window hears a text size change as a resize.
             Event::Resized => {
                 let lines = wrapped(&self.words.message, &ctx.text, &ctx.forms());
@@ -283,6 +334,14 @@ impl Unlock {
         ctx.forms().text.size(CLIENT)
     }
 
+    /// The box's client size in design units: [`CONFIRM_CLIENT`] with a confirm field.
+    pub fn design_size(&self) -> (i32, i32) {
+        match self.words.confirm {
+            Some(_) => CONFIRM_CLIENT,
+            None => CLIENT,
+        }
+    }
+
     pub fn fail(&mut self, why: &str) {
         self.busy = false;
         self.form.set_text("status", why);
@@ -303,7 +362,8 @@ impl Unlock {
     }
 
     fn can_submit(&self) -> bool {
-        !self.busy && !self.passphrase().is_empty()
+        let confirmed = self.words.confirm.is_none() || !self.form.edit_text("confirm").is_empty();
+        !self.busy && !self.passphrase().is_empty() && confirmed
     }
 
     fn take(&mut self) -> Zeroizing<String> {
@@ -312,11 +372,13 @@ impl Unlock {
         out
     }
 
+    /// Wipes both fields.
     fn wipe(&mut self) {
-        if let Some(Control::Edit { edit, .. }) =
-            self.form.item_mut("passphrase").map(|i| &mut i.control)
-        {
-            edit.wipe();
+        for id in ["passphrase", "confirm"] {
+            if let Some(Control::Edit { edit, .. }) = self.form.item_mut(id).map(|i| &mut i.control)
+            {
+                edit.wipe();
+            }
         }
     }
 
@@ -339,6 +401,7 @@ impl Drop for Unlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn typed(d: &mut Unlock, s: &str) {
         for ch in s.chars() {
@@ -511,6 +574,76 @@ mod tests {
         assert_eq!(d.status(), "The passphrase is not correct.");
         typed(&mut d, "right");
         assert!(matches!(d.event(form::Event::Default), Outcome::Submit(_)));
+    }
+
+    fn confirming() -> Unlock {
+        let words = Words {
+            confirm: Some(Confirm {
+                label: "Again:".into(),
+                mismatch: "They differ.".into(),
+            }),
+            ..Words::drive("VAULT")
+        };
+        Unlock::new("a.zip".into(), words, &[message("VAULT")], None)
+    }
+
+    fn focus_on(d: &mut Unlock, id: &str) {
+        d.form.focus_id(id);
+    }
+
+    #[test]
+    fn a_confirm_box_waits_for_both_fields_and_refuses_two_that_differ() {
+        let mut d = confirming();
+        assert_eq!(d.design_size(), CONFIRM_CLIENT);
+        typed(&mut d, "hunter2");
+        assert!(
+            matches!(d.event(form::Event::Default), Outcome::None),
+            "OK waits for the confirm field"
+        );
+        focus_on(&mut d, "confirm");
+        typed(&mut d, "hunter3");
+        assert!(
+            matches!(d.event(form::Event::Default), Outcome::Redraw),
+            "two that differ are not handed over"
+        );
+        assert_eq!(d.status(), "They differ.");
+        assert_eq!(
+            (d.passphrase(), d.form.edit_text("confirm")),
+            ("", ""),
+            "both fields are wiped"
+        );
+        assert_eq!(d.form.focus(), d.form.index_of("passphrase"));
+        typed(&mut d, "hunter2");
+        focus_on(&mut d, "confirm");
+        typed(&mut d, "hunter2");
+        match d.event(form::Event::Default) {
+            Outcome::Submit(p) => assert_eq!(p.as_str(), "hunter2"),
+            _ => panic!("two that match are handed over"),
+        }
+        assert_eq!((d.passphrase(), d.form.edit_text("confirm")), ("", ""));
+    }
+
+    #[test]
+    fn cancel_and_the_close_box_wipe_both_fields() {
+        for close in [false, true] {
+            let mut d = confirming();
+            typed(&mut d, "hunter2");
+            focus_on(&mut d, "confirm");
+            typed(&mut d, "hunter2");
+            let out = match close {
+                true => d.input(
+                    Event::CloseRequest,
+                    &mut ctx_on(Path::new("/nowhere"), "x", 100),
+                ),
+                false => d.event(form::Event::Cancel),
+            };
+            assert!(matches!(out, Outcome::Cancel));
+            assert_eq!(
+                (d.passphrase(), d.form.edit_text("confirm")),
+                ("", ""),
+                "close={close} wipes both fields"
+            );
+        }
     }
 
     #[test]
