@@ -604,6 +604,19 @@ pub(crate) fn subfolders(place: &Place, inp: &Inputs) -> Vec<(String, Place)> {
     place::tree_subfolders(&listed, inp.drive_mounts)
 }
 
+/// [`subfolders`] each with its own or special-folder icon, read as the tree's nodes are, icon
+/// files decoded at `world`'s menu size: a breadcrumb chevron's menu rows.
+pub(crate) fn subfolders_worn(place: &Place, world: &World) -> Vec<(String, Place, Own)> {
+    let inp = world.inputs();
+    let art = (world.px, world.scale);
+    (subfolders(place, &inp).into_iter())
+        .map(|(name, p)| {
+            let own = Own::read(&p, &inp, art, &world.specials);
+            (name, p, own)
+        })
+        .collect()
+}
+
 /// Whether `dir` holds a folder the tree would show under it: one the listing keeps (a hidden folder
 /// only with hidden files shown) that is not another drive's mount point. A symlink to a folder is a
 /// shortcut, which the tree leaves out. The read stops at the first.

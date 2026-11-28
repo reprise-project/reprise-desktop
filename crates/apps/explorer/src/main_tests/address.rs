@@ -546,3 +546,46 @@ fn a_chevron_menu_on_a_dead_mount_opens_empty_and_does_not_block() {
     ex.held = None;
     wake_until(&mut ex, &mut ctx, |ex| rows(ex) == ["inner true"]);
 }
+
+#[test]
+fn a_chevron_menu_row_wears_its_folders_own_icon() {
+    let dir = tempfile::tempdir().expect("a temp dir");
+    let real = std::fs::canonicalize(dir.path()).expect("canonical");
+    let (plain, own) = (real.join("plain"), real.join("own"));
+    std::fs::create_dir(&plain).expect("mkdir");
+    std::fs::create_dir(&own).expect("mkdir");
+    let png = real.join("icon.png");
+    let mut art = Canvas::new(16, 16);
+    art.fill_rect(art.bounds(), reprisekit::theme::Color::rgb(0xFF, 0, 0));
+    std::fs::write(&png, reprisekit::raster::to_png(&art)).expect("png");
+    let entry = format!("[Desktop Entry]\nIcon={}\n", png.display());
+    std::fs::write(own.join(".directory"), entry).expect(".directory");
+    let mut ctx = test_ctx();
+    let here = Place::Folder(real.clone());
+    let mut ex = test_explorer(here.clone(), &mut ctx);
+    let last = crate::chrome::crumb_places(&here, &ex.drive_mounts).len() - 1;
+    ex.open_crumb_menu(last, (10, 30), &mut ctx);
+    let listed = |ex: &Explorer| {
+        ex.popup
+            .as_ref()
+            .is_some_and(|p| p.menu().items().len() == 2)
+    };
+    wake_until(&mut ex, &mut ctx, listed);
+    let p = ex.popup.as_ref().expect("the menu is open");
+    let icon = |i: usize| match &p.menu().items()[i] {
+        reprisekit::controls::menu::MenuItem::Entry { icon, .. } => icon.clone(),
+        _ => None,
+    };
+    let row = |name: &str| {
+        (p.menu().items().iter())
+        .position(|it| matches!(it, reprisekit::controls::menu::MenuItem::Entry { label, .. } if label == name))
+        .expect("a row per subfolder")
+    };
+    let worn = icon(row("own")).expect("the icon file is worn");
+    assert_eq!(worn.get(8, 8), 0xFFFF_0000, "the folder's own picture");
+    assert_eq!(
+        p.named_icons(&Command::GoTo(Place::Folder(plain))),
+        Some(&["folder".to_string()][..]),
+        "a plain folder wears the theme's folder"
+    );
+}

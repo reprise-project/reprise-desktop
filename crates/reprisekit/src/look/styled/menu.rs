@@ -61,6 +61,17 @@ pub fn draw_check(
     true
 }
 
+/// The style's [`Part::MenuCheck`] box over `r` without its mark, under a checked row's icon;
+/// `false` when the style has none.
+pub fn draw_check_box(st: &Style, c: &mut Canvas, r: Rect, lit: bool, s: i32) -> bool {
+    if st.part(Part::MenuCheck).is_none() {
+        return false;
+    }
+    let state = if lit { State::Hot } else { State::Normal };
+    st.draw(c, r, Part::MenuCheck, state, s);
+    true
+}
+
 pub fn draw_bar(st: &Style, c: &mut Canvas, r: Rect, s: i32) -> bool {
     if st.part(Part::MenuBar).is_none() {
         return false;

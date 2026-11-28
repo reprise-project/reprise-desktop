@@ -1,0 +1,12 @@
+Light 1 lit None c4ef1682aa68d8de
+Light 1 lit Some(0) 79d5bae54e6a46b9
+Light 1 lit Some(2) 8b95a95edf9bb7ab
+Light 2 lit None 567b41a835b607f3
+Light 2 lit Some(0) 8481e5f25ad59c4d
+Light 2 lit Some(2) ce458bfae8dd0371
+Dark 1 lit None d1376b2181f76534
+Dark 1 lit Some(0) d44d00762b7fe8ac
+Dark 1 lit Some(2) 1bddd76ff27fad80
+Dark 2 lit None 64458b4487404cdc
+Dark 2 lit Some(0) e46a60b97f0185b8
+Dark 2 lit Some(2) 4226b87ad341dec4

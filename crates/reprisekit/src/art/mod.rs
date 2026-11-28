@@ -2,6 +2,7 @@
 
 pub mod bticon;
 pub mod clockface;
+pub mod cmdglyph;
 pub mod devicon;
 pub mod folderpic;
 pub mod glyph;

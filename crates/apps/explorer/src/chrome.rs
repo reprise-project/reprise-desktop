@@ -13,6 +13,7 @@ use repriseapp::{Ctx, Reply};
 use reprisefs::listing::Item;
 use reprisefs::netshare::Share;
 use reprisefs::places::{Drive, DriveKind, Gadget};
+use reprisekit::art::cmdglyph::{self, CmdGlyph};
 use reprisekit::art::viewsicon;
 use reprisekit::controls::addressbar::{self, AddressBar};
 use reprisekit::controls::breadcrumb::Crumb;
@@ -360,7 +361,11 @@ impl Explorer {
             Hit::ViewsCycle => {
                 return self.run(Command::Mode(crate::commands::next_mode(self.sv.mode)), ctx);
             }
-            Hit::ViewsDrop => (crate::menus::views_menu(self.sv.mode), IconWaits::default()),
+            Hit::ViewsDrop => {
+                let glyph = menu_glyph(ctx);
+                let menu = crate::menus::views_menu(self.sv.mode, &glyph);
+                (menu, IconWaits::default())
+            }
             Hit::Help => return Reply::none(),
         };
         if menu.items().is_empty() {
@@ -379,7 +384,7 @@ impl Explorer {
     fn bar_menu(&mut self, which: BarMenu, ctx: &mut Ctx) -> (Menu, IconWaits) {
         let mut waits = IconWaits::default();
         let menu = match which {
-            BarMenu::Organize => crate::menus::organize_menu(&self.menu_state()),
+            BarMenu::Organize => crate::menus::organize_menu(&self.menu_state(), &menu_glyph(ctx)),
             BarMenu::New => crate::menus::new_items_menu(&self.menu_state()),
             BarMenu::OpenWith => match self.sv.selection.single() {
                 Some(i) => crate::menus::open_with_items(&self.build_open_with(i, &mut waits, ctx)),
@@ -513,42 +518,160 @@ pub(crate) struct CrumbMenu {
     at: (i32, i32),
     /// The next crumb's place, its row bold.
     current: Option<Place>,
-    job: Job<Vec<(String, Place)>>,
+    job: Job<Vec<(String, Place, foldertree::Own)>>,
 }
 
-/// The chevron menu: a row per subfolder, `current` bold; one greyed row when there are none.
-fn crumb_menu(rows: &[(String, Place)], current: Option<&Place>) -> Menu {
-    let mut m = Menu::default();
-    for (name, place) in rows {
-        let item = MenuItem::entry(name.clone()).bold(current == Some(place));
-        m.row(item, Command::GoTo(place.clone()));
+/// A place menu's rows as they go to the popup: each row's icon names by its command, for the
+/// icons that land after it opened ([`Popup::named`]), and the names still decoding.
+struct Worn {
+    menu: Menu,
+    names: Vec<(Command, Vec<String>)>,
+    waits: IconWaits,
+}
+
+impl Worn {
+    fn new() -> Worn {
+        Worn {
+            menu: Menu::default(),
+            names: Vec::new(),
+            waits: IconWaits::default(),
+        }
     }
-    if rows.is_empty() {
-        let empty = MenuItem::entry(tr!("chrome-crumb-menu-empty")).enabled(false);
-        m.row(empty, Command::Nothing);
+
+    /// A row going to `place`, wearing the icon file `file` or else the first of `names` the
+    /// theme carries.
+    fn row(
+        &mut self,
+        item: MenuItem,
+        cmd: Command,
+        (file, names): (Option<&Canvas>, Vec<String>),
+        icons: &mut IconCache,
+        px: i32,
+    ) {
+        let icon = match file {
+            Some(c) => Some(c.clone()),
+            None => {
+                let n: Vec<&str> = names.iter().map(String::as_str).collect();
+                self.waits.first(icons, &n, px)
+            }
+        };
+        if file.is_none() {
+            self.names.push((cmd.clone(), names));
+        }
+        self.menu.row(item.icon(icon), cmd);
     }
-    m
+
+    fn popup(self, at: (i32, i32), ctx: &Ctx) -> Popup {
+        Popup::new(at, self.menu, ctx, false).named(self.waits, self.names)
+    }
 }
 
 impl Explorer {
-    /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them, as it
-    /// reads the view; the menu opens with them when the read answers within [`crate::LIST_WAIT`],
-    /// else empty, taking them when it answers ([`Explorer::land_crumb_menu`]).
+    /// The icon names `place` wears in a place menu, best first: a drive by its kind, a special
+    /// folder by its own, else the place's.
+    pub(crate) fn place_icon_names(&self, place: &Place) -> Vec<String> {
+        let drive = match place {
+            Place::Folder(at) => {
+                (self.drives.iter().find(|d| d.mount == *at)).map(|d| d.kind().icon().to_string())
+            }
+            _ => None,
+        };
+        let special = match place {
+            Place::Folder(at) => {
+                (self.specials.iter().find(|(d, _)| d == at)).map(|(_, n)| n.to_string())
+            }
+            _ => None,
+        };
+        (drive.into_iter().chain(special))
+            .chain([place.icon_name().to_string()])
+            .collect()
+    }
+
+    /// The chevron menu: a row per subfolder wearing its own icon, `current` bold; one greyed row
+    /// when there are none.
+    fn crumb_menu(
+        &self,
+        rows: &[(String, Place, foldertree::Own)],
+        current: Option<&Place>,
+        ctx: &mut Ctx,
+    ) -> Worn {
+        let px = crate::fileops::menu_icon_px(&ctx.theme);
+        let mut m = Worn::new();
+        for (name, place, own) in rows {
+            let item = MenuItem::entry(name.clone()).bold(current == Some(place));
+            let mut names = self.place_icon_names(place);
+            let file = match own {
+                foldertree::Own::File(art) => art.as_ref(),
+                foldertree::Own::Named(own) => {
+                    names.splice(0..0, own.iter().cloned());
+                    None
+                }
+                foldertree::Own::None => None,
+            };
+            m.row(
+                item,
+                Command::GoTo(place.clone()),
+                (file, names),
+                &mut ctx.icons,
+                px,
+            );
+        }
+        if rows.is_empty() {
+            let empty = MenuItem::entry(tr!("chrome-crumb-menu-empty")).enabled(false);
+            m.menu.row(empty, Command::Nothing);
+        }
+        m
+    }
+
+    /// The « menu: the crumbs folded into it, nearest first, each going to its place and wearing
+    /// its icon.
+    pub(crate) fn folded_crumbs_menu(
+        &self,
+        folded: usize,
+        at: (i32, i32),
+        ctx: &mut Ctx,
+    ) -> Option<Popup> {
+        let places = crumb_places(&self.place, &self.drive_mounts);
+        let px = crate::fileops::menu_icon_px(&ctx.theme);
+        let mut m = Worn::new();
+        let n = folded.min(self.crumbs.crumbs.len()).min(places.len());
+        for (c, place) in self.crumbs.crumbs[..n].iter().zip(&places).rev() {
+            let names = self.place_icon_names(place);
+            let item = MenuItem::entry(c.label.clone());
+            m.row(
+                item,
+                Command::Navigate(c.target.clone()),
+                (None, names),
+                &mut ctx.icons,
+                px,
+            );
+        }
+        (!m.menu.items().is_empty()).then(|| m.popup(at, ctx))
+    }
+
+    /// Opens the menu of crumb `i`'s subfolders at `at`. The listing thread reads them with their
+    /// own icons, as it reads the view; the menu opens with them when the read answers within
+    /// [`crate::LIST_WAIT`], else empty, taking them when it answers
+    /// ([`Explorer::land_crumb_menu`]).
     pub(crate) fn open_crumb_menu(&mut self, i: usize, at: (i32, i32), ctx: &mut Ctx) -> Reply {
         let places = crumb_places(&self.place, &self.drive_mounts);
         let Some(place) = places.get(i).cloned() else {
             return Reply::none();
         };
         let current = places.get(i + 1).cloned();
-        let world = self.tree_world();
-        let read = move || foldertree::subfolders(&place, &world.inputs());
+        let world = foldertree::World {
+            px: crate::fileops::menu_icon_px(&ctx.theme),
+            scale: ctx.icons.scale(),
+            ..self.tree_world()
+        };
+        let read = move || foldertree::subfolders_worn(&place, &world);
         self.crumb_menu = None;
         let menu = match self.read_job(ctx, read) {
-            Ok(rows) => crumb_menu(&rows, current.as_ref()),
+            Ok(rows) => self.crumb_menu(&rows, current.as_ref(), ctx),
             Err(job) => {
-                let shown = crumb_menu(&[], None);
+                let shown = self.crumb_menu(&[], None, ctx);
                 self.crumb_menu = Some(CrumbMenu {
-                    shown: shown.clone(),
+                    shown: shown.menu.clone(),
                     at,
                     current,
                     job,
@@ -556,13 +679,13 @@ impl Explorer {
                 shown
             }
         };
-        self.popup = Some(window::Popup::new(at, menu, ctx, false));
+        self.popup = Some(menu.popup(at, ctx));
         Reply::redraw()
     }
 
     /// A chevron menu's late read answered: the menu takes its rows if it is still the one open.
     /// True when it did.
-    pub(crate) fn land_crumb_menu(&mut self, ctx: &Ctx) -> bool {
+    pub(crate) fn land_crumb_menu(&mut self, ctx: &mut Ctx) -> bool {
         let Some(rows) = self.crumb_menu.as_ref().and_then(|m| m.job.take()) else {
             return false;
         };
@@ -572,10 +695,16 @@ impl Explorer {
         if !self.popup.as_ref().is_some_and(|p| *p.menu() == m.shown) {
             return false;
         }
-        let menu = crumb_menu(&rows, m.current.as_ref());
-        self.popup = Some(window::Popup::new(m.at, menu, ctx, false));
+        let menu = self.crumb_menu(&rows, m.current.as_ref(), ctx);
+        self.popup = Some(menu.popup(m.at, ctx));
         true
     }
+}
+
+/// A command's glyph at the menus' icon size and the window's scale.
+pub(crate) fn menu_glyph(ctx: &Ctx) -> impl Fn(CmdGlyph) -> Option<Canvas> + use<> {
+    let (px, scale) = (crate::fileops::menu_icon_px(&ctx.theme), ctx.icons.scale());
+    move |g| Some(cmdglyph::canvas(g, px, scale))
 }
 
 /// Where `part` lies in `l`.

@@ -224,22 +224,12 @@ impl Explorer {
     }
 
     /// The crumbs folded into «, nearest first, each going to its place.
-    fn open_folded_crumbs(&mut self, bl: &breadcrumb::Layout, ctx: &Ctx) -> Reply {
-        let mut m = Menu::default();
-        for c in self.crumbs.crumbs[..bl.folded.min(self.crumbs.crumbs.len())]
-            .iter()
-            .rev()
-        {
-            m.row(
-                MenuItem::entry(c.label.clone()),
-                Command::Navigate(c.target.clone()),
-            );
-        }
-        if m.items().is_empty() {
-            return Reply::redraw();
-        }
+    fn open_folded_crumbs(&mut self, bl: &breadcrumb::Layout, ctx: &mut Ctx) -> Reply {
         let at = (bl.overflow.x, bl.overflow.bottom());
-        self.popup = Some(Popup::new(at, m, ctx, false));
+        let Some(popup) = self.folded_crumbs_menu(bl.folded, at, ctx) else {
+            return Reply::redraw();
+        };
+        self.popup = Some(popup);
         Reply::redraw()
     }
 

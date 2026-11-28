@@ -19,6 +19,8 @@ fn draw_check(canvas: &mut Canvas, x: i32, y: i32, s: i32, color: crate::theme::
 
 /// Design px between a heading's title and its rule.
 const HEADING_GAP: i32 = 4;
+/// A greyed row's icon in a gutter menu: in greys at this share of its alpha.
+const GREYED_ICON: (u32, u32) = (1, 2);
 
 pub const BULLET_D: i32 = 6;
 const BULLET_RUNS: [(i32, i32); BULLET_D as usize] =
@@ -559,9 +561,23 @@ fn draw_gutter_menu(
         let square = Rect::new(r.x, r.y, r.height, r.height);
         match icon {
             Some(ic) => {
-                let ic = &*crate::icon::on_ground(ic, cs.menu, cs.menu_text, s);
+                // A checked row's icon sits in the check's box, which stands for the mark.
+                if *checked {
+                    look::draw_check_box(marks, canvas, square, lit, g);
+                }
+                let ground = if layout.gutter > 0 {
+                    m.gutter_fill
+                } else {
+                    cs.menu
+                };
+                let ic = &*crate::icon::on_ground(ic, ground, cs.menu_text, s);
                 let iy = r.y + (r.height - ic.height as i32) / 2;
-                canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
+                if layout.gutter > 0 && !*enabled {
+                    let (num, den) = GREYED_ICON;
+                    canvas.blit_over_greyed(r.x + layout.icon_x, iy, ic, num, den);
+                } else {
+                    canvas.blit_canvas(r.x + layout.icon_x, iy, ic);
+                }
             }
             None if *checked => {
                 look::draw_check(marks, m, canvas, square, *radio, lit, g);
