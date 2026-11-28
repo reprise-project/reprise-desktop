@@ -1481,12 +1481,8 @@ mod tests {
     #[test]
     fn a_shown_extension_pins_the_label_and_the_rename_box() {
         reprisekit::pins::fonts();
+        use reprisekit::pins::fnv;
         use reprisekit::textedit::Caret;
-        fn fnv(c: &reprisekit::raster::Canvas) -> u64 {
-            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                (h ^ *p as u64).wrapping_mul(0x100000001b3)
-            })
-        }
         let dir = fixture("shown-pixels");
         let _cleanup = Cleanup(dir.clone());
         std::fs::write(dir.join("archive.tar.gz"), "").unwrap();

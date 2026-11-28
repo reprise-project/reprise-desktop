@@ -73,11 +73,7 @@ mod tests {
     use super::super::Mode;
     use super::*;
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-        })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn the_area_under_the_line_is_shaded_and_above_it_is_paper() {

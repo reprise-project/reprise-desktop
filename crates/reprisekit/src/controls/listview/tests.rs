@@ -1470,18 +1470,7 @@ impl Rows for Shares {
     }
 }
 
-/// FNV-1a over the pixels, for pins.
-fn hash(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for y in 0..c.height as i32 {
-        for x in 0..c.width as i32 {
-            for b in c.get(x, y).to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 /// A bar cell fills its share of the cell less 6 px each side (to a whole Classic block), 3 px
 /// clear above and below, in every look and at scale 2.
@@ -1541,7 +1530,7 @@ fn a_bar_cell_fills_its_share_in_every_look_and_scale() {
                 clear(body.y + row_h - 3 * s),
                 "{i:?} x{s}: clear below the bar"
             );
-            pins.push((format!("{i:?} @{s}"), hash(&c)));
+            pins.push((format!("{i:?} @{s}"), fnv(&c)));
         }
     }
     crate::pins::check("controls/listview_bar_cells", &pins);
@@ -1724,7 +1713,7 @@ fn a_classic_header_draws_its_held_and_sorted_titles_at_both_scales() {
             ("held", &held),
             ("held sorted", &held_sorted),
         ] {
-            pins.push((format!("{name} @{s}"), hash(c)));
+            pins.push((format!("{name} @{s}"), fnv(c)));
         }
     }
     crate::pins::check("controls/listview_classic_header", &pins);

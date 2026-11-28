@@ -883,18 +883,7 @@ mod tests {
         out
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h = 0xcbf2_9ce4_8422_2325u64;
-        for v in [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-        {
-            for b in v.to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn the_panel_pins_per_interface_at_scale_1_and_2() {

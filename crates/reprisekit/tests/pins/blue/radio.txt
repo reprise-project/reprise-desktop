@@ -1,40 +1,40 @@
-Blue 1 67f782257de9c673
-Blue 2 2f89408403baa09a
-Olive 1 67f782257de9c673
-Olive 2 2f89408403baa09a
-Silver 1 67f782257de9c673
-Silver 2 2f89408403baa09a
-Slate 1 cb2660acb3593be7
-Slate 2 e67cff9caecb62b4
-Sapphire 1 cb2660acb3593be7
-Sapphire 2 e67cff9caecb62b4
-Obsidian 1 cb2660acb3593be7
-Obsidian 2 e67cff9caecb62b4
-Ember 1 2f2625a1e277da1e
-Ember 2 a1bb40b35b80e52c
-Cobalt 1 d348381bd6611eba
-Cobalt 2 516f04107dd52d6a
-Carbon 1 cb2660acb3593be7
-Carbon 2 e67cff9caecb62b4
-Steel 1 c1b141f9e53746e1
-Steel 2 c0bef381f16efbdd
-Blue dark 1 7fec233b62fb7993
-Blue dark 2 292da5086b8669e7
-Olive dark 1 0211bace6c73c2de
-Olive dark 2 1af70e19ff4a0359
-Silver dark 1 58a88b0c6e4a3ae3
-Silver dark 2 8935c170a7497536
-Slate dark 1 f5d7241f45ceb6cb
-Slate dark 2 0ae02879c0454478
-Sapphire dark 1 2092ea06524532b2
-Sapphire dark 2 8cfaabe69b86787c
-Obsidian dark 1 73ab4d5cd31ef932
-Obsidian dark 2 a892b7bee319c7e4
-Ember dark 1 7a27260ac62de07f
-Ember dark 2 c2dd2e591968a398
-Cobalt dark 1 4f6a977288d38eed
-Cobalt dark 2 9752254ea603e504
-Carbon dark 1 956a13c8a1aca4ae
-Carbon dark 2 bc7c3fa2e101a1fc
-Steel dark 1 5d7ac5a13f2a3f67
-Steel dark 2 f50d61131d294637
+Blue 1 f6f7555d2b02c476
+Blue 2 6a645d0c1626ec17
+Olive 1 f6f7555d2b02c476
+Olive 2 6a645d0c1626ec17
+Silver 1 f6f7555d2b02c476
+Silver 2 6a645d0c1626ec17
+Slate 1 f85dc2dd7a66a65e
+Slate 2 7875148dbe99f1a9
+Sapphire 1 f85dc2dd7a66a65e
+Sapphire 2 7875148dbe99f1a9
+Obsidian 1 f85dc2dd7a66a65e
+Obsidian 2 7875148dbe99f1a9
+Ember 1 acb47872044a4b4b
+Ember 2 a1179f1a346283d9
+Cobalt 1 67f9f52fa38549ff
+Cobalt 2 57c2472111149d7f
+Carbon 1 f85dc2dd7a66a65e
+Carbon 2 7875148dbe99f1a9
+Steel 1 45f0c0303f4ac150
+Steel 2 aee98e414d39c71c
+Blue dark 1 1cd3422f03292616
+Blue dark 2 5dbb9fe7a0bb844a
+Olive dark 1 0b64dd1850e2f1b7
+Olive dark 2 d14abdbc3140dcd0
+Silver dark 1 0bc479dec62d3ad6
+Silver dark 2 0f01c0e8e9753733
+Slate dark 1 d20897153be03b5e
+Slate dark 2 09b7b2ec5e96d115
+Sapphire dark 1 d4587973b621d253
+Sapphire dark 2 2b52a031d0741671
+Obsidian dark 1 69957004706df6b3
+Obsidian dark 2 d6307d232dfbb029
+Ember dark 1 cb9539dd77235776
+Ember dark 2 3967957d25676f35
+Cobalt dark 1 24e58e15280bd8c4
+Cobalt dark 2 75249fd88a064a85
+Carbon dark 1 9a74be4f02c88e1b
+Carbon dark 2 ce7dadf89555da85
+Steel dark 1 21d3bc77c60bf8e6
+Steel dark 2 f348bb22a5f7d7e6

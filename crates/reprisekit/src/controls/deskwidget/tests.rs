@@ -295,16 +295,7 @@ fn the_graph_draws_its_line_at_the_level_of_its_samples() {
     );
 }
 
-/// FNV-1a over the pixels, for pins.
-fn hash(c: &Canvas) -> u64 {
-    c.pixels
-        .iter()
-        .flat_map(|p| p.to_le_bytes())
-        .chain(c.width.to_le_bytes())
-        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-        })
-}
+use crate::pins::fnv;
 
 #[test]
 fn each_widget_pins_in_each_look_at_scale_1_and_2() {
@@ -315,7 +306,7 @@ fn each_widget_pins_in_each_look_at_scale_1_and_2() {
             for (name, content) in samples() {
                 got.push((
                     format!("{i:?} {scale} {name}"),
-                    hash(&drawn(i, scale, &content).0),
+                    fnv(&drawn(i, scale, &content).0),
                 ));
             }
         }

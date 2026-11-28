@@ -3,20 +3,7 @@ use crate::interface::Interface;
 use crate::interfaces::theme_for;
 use crate::theme::Theme;
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325_u64;
-    let mut eat = |b: &[u8]| {
-        for &b in b {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    };
-    eat(&c.width.to_le_bytes());
-    eat(&c.height.to_le_bytes());
-    for p in &c.pixels {
-        eat(&p.to_le_bytes());
-    }
-    h
-}
+use crate::pins::fnv;
 
 /// `w` x `h` with each pixel's red its x and green its y, so a read names where it came from.
 fn coded(w: u32, h: u32) -> Canvas {

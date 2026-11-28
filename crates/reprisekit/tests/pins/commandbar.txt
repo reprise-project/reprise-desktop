@@ -1,48 +1,48 @@
-rest Light 1 00873ebcc67231fa
-organize hot Light 1 e8ab561a87a79e24
-organize open Light 1 b9f69ddcd6070298
-open drop hot Light 1 d9a228c5eb7bbeb3
-open held Light 1 52290685185715f3
-views hot Light 1 3ad383c76ae8af6c
-views list Light 1 6b7dd7e39ac6696f
-focus new folder Light 1 0d550c249d1097cd
-pane rest Light 1 2fb0ebd509373a86
-pane hot Light 1 0421445b589d9834
-pane held Light 1 20fd57d6d783f3ea
-pane shown Light 1 20fd57d6d783f3ea
-rest Light 2 b74300c304ed39a2
-organize hot Light 2 75568819a512d633
-organize open Light 2 51233315246a088f
-open drop hot Light 2 cc1c272b2ee78b8d
-open held Light 2 ccf0dc012c5aabad
-views hot Light 2 4ff3a7186b4eb59a
-views list Light 2 40907bb034e724c6
-focus new folder Light 2 dcbcc09c66e52c0b
-pane rest Light 2 76a2b29629d6a88a
-pane hot Light 2 510775693dcc9a9e
-pane held Light 2 d2a30e53eec81b62
-pane shown Light 2 d2a30e53eec81b62
-rest Dark 1 d96610aa117dba1f
-organize hot Dark 1 6274319e2e11ea60
-organize open Dark 1 7fff8603122f793a
-open drop hot Dark 1 577612fa179d7038
-open held Dark 1 86a6ad8e6b92a1ce
-views hot Dark 1 b71e4dabaea08eb3
-views list Dark 1 e0085193917fd123
-focus new folder Dark 1 1c99a61011d5ef80
-pane rest Dark 1 103baf082e4a3263
-pane hot Dark 1 4e6b8abef42d62e9
-pane held Dark 1 d18647c659ba4251
-pane shown Dark 1 d18647c659ba4251
-rest Dark 2 550c4e6fa0fb416e
-organize hot Dark 2 03a8f962b9277fa4
-organize open Dark 2 0ec780e50ce8f6fb
-open drop hot Dark 2 76fa0e5c72b65b12
-open held Dark 2 3181ee947a9b73b0
-views hot Dark 2 bfcc75d2a384e3ea
-views list Dark 2 79a16fd6a0f765a2
-focus new folder Dark 2 563e97f5f531c6f7
-pane rest Dark 2 b814feba11a973f6
-pane hot Dark 2 cb7b0f83ec6488e2
-pane held Dark 2 bea1361558142c72
-pane shown Dark 2 bea1361558142c72
+rest Light 1 63e2c0be80c96d1e
+organize hot Light 1 2fb754fd86948780
+organize open Light 1 46baf466c2215924
+open drop hot Light 1 6bdb95a3cdc4271f
+open held Light 1 bfd31db46ffae81f
+views hot Light 1 a2fb8491e5e95818
+views list Light 1 9c9334ba1e713c13
+focus new folder Light 1 6a880fcc757d8709
+pane rest Light 1 7ba9eec54434ec7a
+pane hot Light 1 2d9c5b695a63ae30
+pane held Light 1 a1fe78b07961e13e
+pane shown Light 1 a1fe78b07961e13e
+rest Light 2 3e89fff9b3c8ed32
+organize hot Light 2 e4dac43b9a224ce3
+organize open Light 2 5fefb7829f9c619f
+open drop hot Light 2 57abee296f2d437d
+open held Light 2 13d9af699ef4c71d
+views hot Light 2 d7deda404d8beaaa
+views list Light 2 0897eca663ef8e56
+focus new folder Light 2 eb71132a001be05b
+pane rest Light 2 39cfbbbf05fb819a
+pane hot Light 2 4a027470c7a1702e
+pane held Light 2 39850ed7c290c1f2
+pane shown Light 2 39850ed7c290c1f2
+rest Dark 1 87c2ee70c022da83
+organize hot Dark 1 881273395aba57a4
+organize open Dark 1 a278eecc40681aae
+open drop hot Dark 1 85b565373a3e497c
+open held Dark 1 cf083b14d1b5fc4a
+views hot Dark 1 c257afa23464ebdf
+views list Dark 1 14e69df832bef49f
+focus new folder Dark 1 1860d405eb6ce054
+pane rest Dark 1 2e305235d50acc27
+pane hot Dark 1 aaf32c7eff45ce45
+pane held Dark 1 8fc36ed88364c38d
+pane shown Dark 1 8fc36ed88364c38d
+rest Dark 2 077d33f42a856c3e
+organize hot Dark 2 a80e3eea78180134
+organize open Dark 2 6dfb95cfe38b990b
+open drop hot Dark 2 9fecfa2af8732ba2
+open held Dark 2 d8d4c32199ab5a00
+views hot Dark 2 d660729d24870c7a
+views list Dark 2 bdb39011d9ce6632
+focus new folder Dark 2 1be0129f2d9a2767
+pane rest Dark 2 0f819c47556df6c6
+pane hot Dark 2 00dcd0f316bdb472
+pane held Dark 2 fa4d7e22bd4c9b42
+pane shown Dark 2 fa4d7e22bd4c9b42

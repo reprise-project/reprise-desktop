@@ -357,16 +357,7 @@ mod tests {
         crate::pins::check("look/caption_tabs_grown", &got);
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        (0..c.height as i32)
-            .flat_map(|y| (0..c.width as i32).map(move |x| (x, y)))
-            .map(|(x, y)| c.get(x, y))
-            .fold(0xcbf2_9ce4_8422_2325, |h, w| {
-                w.to_le_bytes()
-                    .iter()
-                    .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
-            })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn tabs_share_the_strip_less_the_grab_room_up_to_their_widest() {

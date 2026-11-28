@@ -1,14 +1,14 @@
-rest 1 4aedf59f5244fd0a
-power hot 1 a14125634e74fc87
-power held 1 597f4a87e929b169
-lock hot 1 51f4fac742212eb2
-lock held 1 90e289ad7d6840a2
-arrow hot 1 f8534128bbb886fd
-arrow held 1 906f5a32959efe10
-rest 2 ab3f7f40097c21e9
-power hot 2 ac919c80a5ac1b32
-power held 2 aa92ba965364a976
-lock hot 2 2a304cfd9df3afc5
-lock held 2 d32082283c7eaf05
-arrow hot 2 29e8ba4fc6cd5010
-arrow held 2 7f09269aea844a9d
+rest 1 d1aa9a9fea7549c3
+power hot 1 73d67e9d5e6af6be
+power held 1 9309b7b56877ba8c
+lock hot 1 31f21a40cbab988b
+lock held 1 23ebbce420d346eb
+arrow hot 1 b05874b89d47ed4c
+arrow held 1 21836e1b1d3b84c5
+rest 2 c7fb5eb19e16d244
+power hot 2 395436439248d657
+power held 2 78d17f4c2146f5d3
+lock hot 2 ff8d21700decfdf8
+lock held 2 65ed2fb6faea92c0
+arrow hot 2 4d343a5e274aa221
+arrow held 2 1cbc97a87ec6a6a8

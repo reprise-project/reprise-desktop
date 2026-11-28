@@ -201,21 +201,7 @@ mod tests {
     use crate::classic::indicator;
     use crate::controls::iconview;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h = 0xcbf2_9ce4_8422_2325u64;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
-            }
-        };
-        eat(c.width);
-        eat(c.height);
-        eat(c.scale() as u32);
-        for &p in &c.pixels {
-            eat(p);
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn cases() -> Vec<(String, Canvas)> {
         let mut out: Vec<(String, Canvas)> = Vec::new();

@@ -268,16 +268,7 @@ mod tests {
     use crate::blue::Variant;
     use crate::shape::pack;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let (w, h) = c.device_size();
-        [w, h]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     fn frames(a: &TrayArrowArt) -> [&Canvas; 6] {
         [

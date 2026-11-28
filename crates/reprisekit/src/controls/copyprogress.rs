@@ -1046,11 +1046,7 @@ mod tests {
         assert!(!cp.flight().moving, "the items stay where they are");
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-            (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-        })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn sizes_keep_three_figures() {

@@ -388,17 +388,7 @@ mod tests {
         built(v, d).into_iter().find(|(q, _)| *q == p).unwrap().1
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h = 0xcbf2_9ce4_8422_2325_u64;
-        let bytes = [c.width, c.height]
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .chain(c.pixels.iter().flat_map(|p| p.to_le_bytes()));
-        for b in bytes {
-            h = (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3);
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn frame(img: &PartImage, i: usize) -> Canvas {
         let n = img.states.len() as u32;

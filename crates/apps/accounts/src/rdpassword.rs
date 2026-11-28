@@ -405,9 +405,7 @@ mod tests {
                 false,
                 theme.fonts.size_px,
             );
-            got[k] = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                (h ^ *p as u64).wrapping_mul(0x100000001b3)
-            });
+            got[k] = reprisekit::pins::fnv(&c);
         }
         got
     }

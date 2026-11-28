@@ -362,18 +362,7 @@ fn drawn(theme: &Theme, b: &Breadcrumb, field: Rect, s: i32) -> Canvas {
     c
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied())
-    {
-        for b in v.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 #[test]
 fn breadcrumb_states_pin_in_glass_light_and_dark_at_scale_1_and_2() {

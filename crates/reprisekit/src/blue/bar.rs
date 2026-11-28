@@ -95,18 +95,7 @@ mod tests {
     }
 
     fn fnv(img: &PartImage) -> u64 {
-        let a = &img.atlas;
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let words = [a.width, a.height]
-            .into_iter()
-            .chain(a.pixels.iter().copied());
-        for w in words {
-            for b in w.to_le_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-        h
+        crate::pins::fnv(&img.atlas)
     }
 
     fn lum(v: u32) -> u32 {

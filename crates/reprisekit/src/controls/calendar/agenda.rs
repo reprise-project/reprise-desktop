@@ -249,16 +249,7 @@ mod tests {
     use crate::interface::Interface;
     use crate::theme::Theme;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let words = [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied());
-        words
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     fn event(all_day: bool, start: i64, when: &str, summary: &str) -> DayEvent {
         DayEvent {

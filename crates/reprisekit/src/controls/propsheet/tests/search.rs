@@ -110,18 +110,7 @@ fn a_reader_hears_the_search_field_before_the_list() {
     assert!(kids.iter().position(|&k| k == field) < kids.iter().position(|&k| k == list));
 }
 
-/// FNV-1a over the pixels, for pins.
-fn hash(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for y in 0..c.height as i32 {
-        for x in 0..c.width as i32 {
-            for b in c.get(x, y).to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 /// Rest: the empty field showing its cue, the page focused. Typed: "mo" in the focused field,
 /// caret shown. The field's pixels are `searchfield::draw`'s at the layout's rect.
@@ -184,7 +173,7 @@ fn the_search_field_draws_in_every_look() {
                     }
                 }
                 let state = if typed { "typed" } else { "at rest" };
-                hashes.push((format!("{i:?} @{sc} {state}"), hash(&c)));
+                hashes.push((format!("{i:?} @{sc} {state}"), fnv(&c)));
             }
         }
     }

@@ -344,17 +344,7 @@ mod tests {
         assert!(tree.find(Role::Button, "Close").is_none());
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
-                }
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn the_frame_and_close_box_pin_in_every_interface_at_scale_1_and_2() {

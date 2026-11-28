@@ -7,16 +7,7 @@ fn setup() -> (Theme, TextRenderer) {
     (Theme::default(), TextRenderer::load(&FontConfig::default()))
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let words = [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied());
-    words
-        .flat_map(u32::to_le_bytes)
-        .fold(0xcbf2_9ce4_8422_2325, |h, b| {
-            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
-        })
-}
+use crate::pins::fnv;
 
 fn grown_button(pct: u32, d: i32, g: Glyph, pressed: bool) -> Canvas {
     let t = Theme::default().with_text_size(pct).scaled(d);

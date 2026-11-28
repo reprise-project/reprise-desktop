@@ -953,11 +953,7 @@ fn the_layouts_preview_draws_what_the_field_names_and_nothing_while_it_does_not_
     assert_eq!(size("1|1 2|x", 1), None);
     assert_eq!(size("1 1 1 1 1 1 1", 1), None, "seven layouts");
     use reprisekit::interface::Interface;
-    let hash = |c: &Canvas| {
-        (c.pixels.iter()).fold(0xcbf29ce484222325, |h, p| {
-            (h ^ *p as u64).wrapping_mul(0x100000001b3)
-        })
-    };
+    let hash = reprisekit::pins::fnv;
     let pins: Vec<(String, u64)> = [Interface::Classic, Interface::Blue, Interface::Glass]
         .into_iter()
         .flat_map(|i| {

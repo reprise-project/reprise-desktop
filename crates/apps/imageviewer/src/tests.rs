@@ -464,15 +464,7 @@ fn a_file_that_is_no_picture_says_so_in_the_box() {
     assert_eq!(v.blank_text(), load::cannot_open());
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325_u64;
-    for p in &c.pixels {
-        for b in p.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv;
 
 #[test]
 fn the_main_window_is_pinned_per_interface_and_scale() {

@@ -9,13 +9,7 @@ fn tahoma() -> TextRenderer {
     TextRenderer::load(&FontConfig::default())
 }
 
-fn device_hash(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in c.pixels.iter().flat_map(|p| p.to_le_bytes()) {
-        h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
-    }
-    h
-}
+use crate::pins::fnv;
 
 /// Whether device pixel `p` has hue: its channels differ.
 fn hued(p: u32) -> bool {
@@ -242,7 +236,7 @@ fn emoji_text_pins_at_scale_1_and_2() {
                         .draw(&mut c, rect, text, false, cs.gray_text, Align::Left, PX);
                 }
             }
-            device_hash(&c)
+            fnv(&c)
         };
         for state in ["plain", "selected", "greyed"] {
             got.push((format!("{state} {s}"), draw(state)));

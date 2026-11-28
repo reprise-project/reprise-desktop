@@ -1,26 +1,26 @@
-empty @1 7d54511f188a4fdb
-empty @2 b56ab12697fbb048
-name filled @1 1bdf12fc25bfef6f
-name filled @2 b902540f10a4744f
-message @1 9315a780303c62a7
-message @2 15b69839243e3058
-busy @1 6268dd4eb9d7676a
-busy @2 668b304416926dd3
-caps lock @1 b7413fad854dc187
-caps lock @2 d0d78ad76a643ad3
-layout badge @1 474ecb23539233c2
-layout badge @2 36137cb4012c88be
-admin shut down @1 827524af603cb5e3
-admin shut down @2 edd09b2878194598
-admin restart filled @1 3bf6bd56acae3cab
-admin restart filled @2 0e1c0402280ba25b
-admin shut down caps lock and badge @1 435054de4727d9e7
-admin shut down caps lock and badge @2 ba8fb5aea20de455
-shutting down @1 55e32604c837274a
-shutting down @2 54bacdf473c91800
-over a picture @1 582f977b53c5428f
-over a picture @2 b85727ea9e31ea0f
-admin caps lock and badge in 4 rows 100% @1 dc4e1ebfb4bac05e
-admin caps lock and badge in 4 rows 100% @2 5fe3acbfdd638845
-admin caps lock and badge in 4 rows 125% @1 b10389f834236d99
-admin caps lock and badge in 4 rows 125% @2 a64efa813c092a3a
+empty @1 3c6e606c470d2fcf
+empty @2 6be85c441c799927
+name filled @1 163c307b8ae966ab
+name filled @2 3e20a27782c6fca8
+message @1 0105e280f23509f3
+message @2 f33840c5d5697617
+busy @1 9768f843ec44abae
+busy @2 61d30e3b39ae71dc
+caps lock @1 1caf1a91b7c6c043
+caps lock @2 46205e96aca7d194
+layout badge @1 ec1d037af1e8be66
+layout badge @2 4aa94cacc4365b15
+admin shut down @1 9bbfed7d55fceb77
+admin shut down @2 c8fb4236cfe66e97
+admin restart filled @1 20352025aaeed40f
+admin restart filled @2 57221add3732814c
+admin shut down caps lock and badge @1 17f384c73f18f9d3
+admin shut down caps lock and badge @2 39b78cb719a44fd6
+shutting down @1 94cbb1ff9f0f191e
+shutting down @2 c621347b13a3868f
+over a picture @1 260d2a0181c8d8cb
+over a picture @2 300bdd343cbebda8
+admin caps lock and badge in 4 rows 100% @1 0ddeac9d7840daea
+admin caps lock and badge in 4 rows 100% @2 3f42be79696fbf56
+admin caps lock and badge in 4 rows 125% @1 8620739b3c252b4d
+admin caps lock and badge in 4 rows 125% @2 6478937b7d3b1be9

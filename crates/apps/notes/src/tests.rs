@@ -419,18 +419,7 @@ fn a_note_has_no_frame_and_its_strip_and_edges_move_and_resize_it() {
     assert_eq!(n.grip(win.named_in("confirm"), (1, 1), NOTE_SIZE), None);
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied())
-    {
-        for b in v.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv;
 
 /// A focused yellow note long enough for a scroll bar, New lit.
 fn long_note(i: Interface, scale: i32) -> Canvas {

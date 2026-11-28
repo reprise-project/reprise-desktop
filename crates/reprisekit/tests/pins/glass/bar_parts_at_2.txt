@@ -1,15 +1,15 @@
-40 px taskbar 8b6c3c1e000898c5
-40 px tray aa754acdf116504d
-40 px veil 4fd3cb86e0d22b15
-40 px band 334687f04f50c88d
-40 px edges 63cae354e03aa51d
-40 px foot light dbd091e8856f93f5
-40 px strip 364f0c29ad8154c7
-30 px taskbar 6a49fcd702bcc825
-30 px tray 10845139518a6035
-30 px veil f40bd5aeeb531bc5
-30 px band cb94c4c1ff3ee68d
-30 px edges e033ce2c76d05a05
-30 px foot light de90a15c1f590bf5
-30 px strip 28b6d09de28b1733
-pager light 78c5e0f120be74e5
+40 px taskbar 14777966ddfd71e0
+40 px tray 7a408e8f1b41cd8a
+40 px veil cf1fd9bcc1ba18ce
+40 px band 24833c4eaa91d03e
+40 px edges d7f040687c1db9f8
+40 px foot light 64890e63de1148b0
+40 px strip 1abbbcae56a507c4
+30 px taskbar 08a8c9565a58b38c
+30 px tray 4723e77e5f6f14ee
+30 px veil 4f49a87939d1f312
+30 px band c3fd99f79b9a0762
+30 px edges 63825cb41c0cef58
+30 px foot light 50bf5fb920bc4c50
+30 px strip cec6dd9bc5263d30
+pager light d1e46ebd083b326c

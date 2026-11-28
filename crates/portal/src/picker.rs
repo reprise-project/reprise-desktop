@@ -715,11 +715,7 @@ mod tests {
         use reprisekit::interface::Interface;
         use reprisekit::text::TextRenderer;
         reprisekit::pins::fonts();
-        let hash = |c: &Canvas| {
-            (c.pixels.iter()).fold(0xcbf29ce484222325, |h, p| {
-                (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
-            })
-        };
+        let hash = reprisekit::pins::fnv;
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for pct in [100, 200] {

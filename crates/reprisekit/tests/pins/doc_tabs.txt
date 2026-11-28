@@ -1,270 +1,270 @@
-Classic open and closed 1 641896db952ed375
-Classic open and closed 2 03a6f7d1dcd9ddbb
-Classic hot 1 641896db952ed375
-Classic hot 2 03a6f7d1dcd9ddbb
-Classic hot close 1 e6836efdc0d3b774
-Classic hot close 2 9f5e6f78a772c82b
-Classic held close 1 2155b1a2d31db55c
-Classic held close 2 047d7a36c49dc12b
-Classic adder hot 1 9ba233bc8d3ab1cd
-Classic adder hot 2 b3688dd553d186bb
-Classic adder held 1 864048ff5e4454ed
-Classic adder held 2 86a038ab4cebe05b
-Classic dragged 1 88cfffdb63a831e8
-Classic dragged 2 1cda802e1e1a289b
-Classic plain adder 1 46c0b9e48a45e2ac
-Classic plain adder 2 402a802fb036c4ab
-Classic plain adder hot 1 0bd01a4a12aa361c
-Classic plain adder hot 2 6b0809d03267c1cb
-Blue Blue open and closed 1 9f47371a6374da86
-Blue Blue open and closed 2 11522738f2136c7e
-Blue Blue hot 1 89796c23feb7f366
-Blue Blue hot 2 90ad0713ff74b77c
-Blue Blue hot close 1 8106c9df467b5ce3
-Blue Blue hot close 2 f8a516a97b17fe88
-Blue Blue held close 1 1027998966d893a6
-Blue Blue held close 2 bdd28349ca38911e
-Blue Blue adder hot 1 761cb950d3725785
-Blue Blue adder hot 2 786fea149615c78b
-Blue Blue adder held 1 d0588ad0b1d09b5e
-Blue Blue adder held 2 4e943d9a8e466e3a
-Blue Blue dragged 1 eafdba0417e226cf
-Blue Blue dragged 2 e515e3bf1b2b5b6c
-Blue Blue plain adder 1 38ea38a12c0afeff
-Blue Blue plain adder 2 69c0791fd57126f2
-Blue Blue plain adder hot 1 2ba338b6c55e174b
-Blue Blue plain adder hot 2 5e6ebc819a7e33a0
-Blue Olive open and closed 1 35791810974b9454
-Blue Olive open and closed 2 6373e66a371692f3
-Blue Olive hot 1 9ec94c8d99c530fe
-Blue Olive hot 2 037f605ce851c679
-Blue Olive hot close 1 11e9214efa8b5b43
-Blue Olive hot close 2 c3008c029ceecf5b
-Blue Olive held close 1 e175a873cb2cd42c
-Blue Olive held close 2 1c4536da29913b7b
-Blue Olive adder hot 1 926d0ef96426bb0e
-Blue Olive adder hot 2 36870a098fc536ff
-Blue Olive adder held 1 652b842557a7c25f
-Blue Olive adder held 2 094bcce99e0dd5b0
-Blue Olive dragged 1 eff9d56bf2fe4a75
-Blue Olive dragged 2 8e1cc7aab5807eaa
-Blue Olive plain adder 1 d12082ffbe296a89
-Blue Olive plain adder 2 4137f953f94dcb5f
-Blue Olive plain adder hot 1 b0f46fd7f75f8944
-Blue Olive plain adder hot 2 de25632d20673d11
-Blue Silver open and closed 1 370f663ff8ff8232
-Blue Silver open and closed 2 8e1485bf8d6bf824
-Blue Silver hot 1 b911bf03d9b3f87a
-Blue Silver hot 2 7d23e5c0eadfcc29
-Blue Silver hot close 1 22b786c8c4a59ca4
-Blue Silver hot close 2 acd7e05942e93754
-Blue Silver held close 1 ff0ccf771f4b14f2
-Blue Silver held close 2 8659e08cab4d757c
-Blue Silver adder hot 1 2d26f94ebd187eb2
-Blue Silver adder hot 2 80b8a99a90343db4
-Blue Silver adder held 1 56cca5c8e2731bf8
-Blue Silver adder held 2 67800e8b74dfdebc
-Blue Silver dragged 1 ef4aa0107991beb1
-Blue Silver dragged 2 5d97534a1e06d62b
-Blue Silver plain adder 1 8bc14e52f762fae4
-Blue Silver plain adder 2 516818a0e72eaddf
-Blue Silver plain adder hot 1 a762a885dc6bb5f4
-Blue Silver plain adder hot 2 b08addd6003ac487
-Blue Slate open and closed 1 20dd2654b8e19fb9
-Blue Slate open and closed 2 3127ee1cff6b526d
-Blue Slate hot 1 90f392737d7ec147
-Blue Slate hot 2 b0a448f7c87ff027
-Blue Slate hot close 1 12ba8be2bc710cfe
-Blue Slate hot close 2 ddd040d6cb753f6d
-Blue Slate held close 1 e40535130e21a819
-Blue Slate held close 2 3720f5e346c8f81d
-Blue Slate adder hot 1 0bd565bfd7396920
-Blue Slate adder hot 2 94d970ad1374adb8
-Blue Slate adder held 1 415def5ab641c6da
-Blue Slate adder held 2 9b8d379fcd21e75d
-Blue Slate dragged 1 1e6fb495a6e64ea4
-Blue Slate dragged 2 da611824b2f173b9
-Blue Slate plain adder 1 66544650efbc9d11
-Blue Slate plain adder 2 332697474cf264cd
-Blue Slate plain adder hot 1 268f1e79431c6836
-Blue Slate plain adder hot 2 0b4f8e6dd28b5cad
-Blue Sapphire open and closed 1 54f72ec1a4cc99da
-Blue Sapphire open and closed 2 9dfab4a53652c252
-Blue Sapphire hot 1 934795992705dab3
-Blue Sapphire hot 2 3d27c6304070b52a
-Blue Sapphire hot close 1 8eefefeed745db86
-Blue Sapphire hot close 2 389e1aa17751e68e
-Blue Sapphire held close 1 45b535076c4c32c6
-Blue Sapphire held close 2 467abf83c2ca828a
-Blue Sapphire adder hot 1 9a43143392664a2a
-Blue Sapphire adder hot 2 70567a2014627300
-Blue Sapphire adder held 1 46db3fcccbf8a7e1
-Blue Sapphire adder held 2 f9e4f5684539947c
-Blue Sapphire dragged 1 feaf3e71b3ada4f6
-Blue Sapphire dragged 2 31978c25597cdf99
-Blue Sapphire plain adder 1 ebab7faf281825f5
-Blue Sapphire plain adder 2 2d52e4cb45ab7c15
-Blue Sapphire plain adder hot 1 f978579181e4f125
-Blue Sapphire plain adder hot 2 5061130bbdea19a1
-Blue Obsidian open and closed 1 54f72ec1a4cc99da
-Blue Obsidian open and closed 2 9dfab4a53652c252
-Blue Obsidian hot 1 934795992705dab3
-Blue Obsidian hot 2 3d27c6304070b52a
-Blue Obsidian hot close 1 8eefefeed745db86
-Blue Obsidian hot close 2 389e1aa17751e68e
-Blue Obsidian held close 1 45b535076c4c32c6
-Blue Obsidian held close 2 467abf83c2ca828a
-Blue Obsidian adder hot 1 9a43143392664a2a
-Blue Obsidian adder hot 2 70567a2014627300
-Blue Obsidian adder held 1 46db3fcccbf8a7e1
-Blue Obsidian adder held 2 f9e4f5684539947c
-Blue Obsidian dragged 1 feaf3e71b3ada4f6
-Blue Obsidian dragged 2 31978c25597cdf99
-Blue Obsidian plain adder 1 ebab7faf281825f5
-Blue Obsidian plain adder 2 2d52e4cb45ab7c15
-Blue Obsidian plain adder hot 1 f978579181e4f125
-Blue Obsidian plain adder hot 2 5061130bbdea19a1
-Blue Ember open and closed 1 2e239b13f647f30e
-Blue Ember open and closed 2 b407937fc43268b6
-Blue Ember hot 1 535ffbba392a62dd
-Blue Ember hot 2 07b952d069d0e73d
-Blue Ember hot close 1 4760f5a4c3feca85
-Blue Ember hot close 2 3a5d2d4c6f03b266
-Blue Ember held close 1 bbc10e0114b1907e
-Blue Ember held close 2 e9c4ec98fcfd15c6
-Blue Ember adder hot 1 f73e64bc66527683
-Blue Ember adder hot 2 125f656a577d9b47
-Blue Ember adder held 1 c1b1442bd65790dd
-Blue Ember adder held 2 058d510a8be3c8de
-Blue Ember dragged 1 b0749273dd69a037
-Blue Ember dragged 2 24b2567f322a461f
-Blue Ember plain adder 1 f803eadc714b2822
-Blue Ember plain adder 2 378fe548cacba886
-Blue Ember plain adder hot 1 b55c0f613d0f803d
-Blue Ember plain adder hot 2 2f9aab85fa8e5e76
-Blue Cobalt open and closed 1 54f72ec1a4cc99da
-Blue Cobalt open and closed 2 9dfab4a53652c252
-Blue Cobalt hot 1 934795992705dab3
-Blue Cobalt hot 2 3d27c6304070b52a
-Blue Cobalt hot close 1 8eefefeed745db86
-Blue Cobalt hot close 2 389e1aa17751e68e
-Blue Cobalt held close 1 45b535076c4c32c6
-Blue Cobalt held close 2 467abf83c2ca828a
-Blue Cobalt adder hot 1 9a43143392664a2a
-Blue Cobalt adder hot 2 70567a2014627300
-Blue Cobalt adder held 1 46db3fcccbf8a7e1
-Blue Cobalt adder held 2 f9e4f5684539947c
-Blue Cobalt dragged 1 feaf3e71b3ada4f6
-Blue Cobalt dragged 2 31978c25597cdf99
-Blue Cobalt plain adder 1 ebab7faf281825f5
-Blue Cobalt plain adder 2 2d52e4cb45ab7c15
-Blue Cobalt plain adder hot 1 f978579181e4f125
-Blue Cobalt plain adder hot 2 5061130bbdea19a1
-Blue Carbon open and closed 1 54f72ec1a4cc99da
-Blue Carbon open and closed 2 9dfab4a53652c252
-Blue Carbon hot 1 934795992705dab3
-Blue Carbon hot 2 3d27c6304070b52a
-Blue Carbon hot close 1 8eefefeed745db86
-Blue Carbon hot close 2 389e1aa17751e68e
-Blue Carbon held close 1 45b535076c4c32c6
-Blue Carbon held close 2 467abf83c2ca828a
-Blue Carbon adder hot 1 9a43143392664a2a
-Blue Carbon adder hot 2 70567a2014627300
-Blue Carbon adder held 1 46db3fcccbf8a7e1
-Blue Carbon adder held 2 f9e4f5684539947c
-Blue Carbon dragged 1 feaf3e71b3ada4f6
-Blue Carbon dragged 2 31978c25597cdf99
-Blue Carbon plain adder 1 ebab7faf281825f5
-Blue Carbon plain adder 2 2d52e4cb45ab7c15
-Blue Carbon plain adder hot 1 f978579181e4f125
-Blue Carbon plain adder hot 2 5061130bbdea19a1
-Blue Steel open and closed 1 59173b885f8c7f3e
-Blue Steel open and closed 2 801c67cffbd38421
-Blue Steel hot 1 4666b197f6f12246
-Blue Steel hot 2 571613f0fba44532
-Blue Steel hot close 1 27284559498e3b3c
-Blue Steel hot close 2 939ef520080f01c1
-Blue Steel held close 1 a682576833ee6866
-Blue Steel held close 2 fb21abb1911cb7e1
-Blue Steel adder hot 1 3aba5fa7e48e22e1
-Blue Steel adder hot 2 dccab5f1f4b7735a
-Blue Steel adder held 1 e3f8ba6c43fb9261
-Blue Steel adder held 2 1af006b699dab624
-Blue Steel dragged 1 72b385b7cea60ac9
-Blue Steel dragged 2 cd23116f1becc8f7
-Blue Steel plain adder 1 f09ba3721ab0e339
-Blue Steel plain adder 2 88091c38c12f4177
-Blue Steel plain adder hot 1 314b44740474fb3a
-Blue Steel plain adder hot 2 438b8e95ea28675b
-Glass Light on glass open and closed 1 04214d7cb95861a8
-Glass Light on glass open and closed 2 7bb1d297c89c316b
-Glass Light on glass hot 1 e2b5c05600180141
-Glass Light on glass hot 2 6cab5db7b3d77dd1
-Glass Light on glass hot close 1 ea0c6aacc87febf5
-Glass Light on glass hot close 2 e0531e446456cb56
-Glass Light on glass held close 1 b5cf0ab3ab254921
-Glass Light on glass held close 2 e06cbf6b17486adb
-Glass Light on glass adder hot 1 6ff32c684b737f0c
-Glass Light on glass adder hot 2 157927f977bca9db
-Glass Light on glass adder held 1 4862b28d988c2c14
-Glass Light on glass adder held 2 0b40c77e185d0817
-Glass Light on glass dragged 1 bc87a102810c3919
-Glass Light on glass dragged 2 f83e7852c1949d39
-Glass Light on glass plain adder 1 f23d8fd83cdc4753
-Glass Light on glass plain adder 2 03ffe398ec2b3d05
-Glass Light on glass plain adder hot 1 cfb26800fe97779f
-Glass Light on glass plain adder hot 2 2ced35b7b721a7ad
-Glass Light on face open and closed 1 bb573c57dca2da78
-Glass Light on face open and closed 2 eecbecf69f21d086
-Glass Light on face hot 1 b6ca985ceb91a2ca
-Glass Light on face hot 2 6be74d47cc748e56
-Glass Light on face hot close 1 3c8cf9ae28f59910
-Glass Light on face hot close 2 4037ab9560649a8e
-Glass Light on face held close 1 2e5dc2f6fb804768
-Glass Light on face held close 2 6e29334daf2a89f6
-Glass Light on face adder hot 1 7009f13ea22b6936
-Glass Light on face adder hot 2 4b912646721d0478
-Glass Light on face adder held 1 506a4390b4ea833a
-Glass Light on face adder held 2 eec566aa1a28e33a
-Glass Light on face dragged 1 3e2aa24266acb2f7
-Glass Light on face dragged 2 37a9fc4c0fcf12be
-Glass Light on face plain adder 1 4592e1b2bd07dcaa
-Glass Light on face plain adder 2 c6979de52054f803
-Glass Light on face plain adder hot 1 0b0d25cc73aa6dfa
-Glass Light on face plain adder hot 2 4af1b51b4ef516c7
-Glass Dark on glass open and closed 1 f86de534c76e2bc3
-Glass Dark on glass open and closed 2 838baea15fca5a11
-Glass Dark on glass hot 1 965abb16d2942133
-Glass Dark on glass hot 2 f27dd2e9820c5320
-Glass Dark on glass hot close 1 19218bc2788e7942
-Glass Dark on glass hot close 2 ab8da0d9f168e763
-Glass Dark on glass held close 1 dacbd34536f2aeef
-Glass Dark on glass held close 2 b1ad831c38d15385
-Glass Dark on glass adder hot 1 d7a1d87bdd613c15
-Glass Dark on glass adder hot 2 aca74b031b5729f1
-Glass Dark on glass adder held 1 10d112341dc064bf
-Glass Dark on glass adder held 2 3ec761becbbfb5dd
-Glass Dark on glass dragged 1 a45fca35957caa75
-Glass Dark on glass dragged 2 572edd24d3d88716
-Glass Dark on glass plain adder 1 cc1a6d8b2301d84f
-Glass Dark on glass plain adder 2 8d8f2b60337b02bd
-Glass Dark on glass plain adder hot 1 491a7df5ea3d9c37
-Glass Dark on glass plain adder hot 2 7e844eaa1fef1d21
-Glass Dark on face open and closed 1 0a6dad4468e08cd1
-Glass Dark on face open and closed 2 6dc826bf983db07f
-Glass Dark on face hot 1 3f7468af026731c6
-Glass Dark on face hot 2 2eb8169a8dafb617
-Glass Dark on face hot close 1 7ef20c71da0dbfc8
-Glass Dark on face hot close 2 00f5d4b878d7338f
-Glass Dark on face held close 1 6f9ae0005fb16141
-Glass Dark on face held close 2 6a8060b98887cfdf
-Glass Dark on face adder hot 1 da031891a08074f6
-Glass Dark on face adder hot 2 d1889886062d5411
-Glass Dark on face adder held 1 7e5942af3c5b8e8f
-Glass Dark on face adder held 2 ebb4c737d6670fb8
-Glass Dark on face dragged 1 e7cae82a0a1b5340
-Glass Dark on face dragged 2 61d1bf2b398e2a4f
-Glass Dark on face plain adder 1 8e3f0bc6d6e9accb
-Glass Dark on face plain adder 2 3169d45ddaea6887
-Glass Dark on face plain adder hot 1 e05e34dcf570819b
-Glass Dark on face plain adder hot 2 fa43df2e3851a5ab
+Classic open and closed 1 c78e4616a28c3548
+Classic open and closed 2 10e45a74e8a70dce
+Classic hot 1 c78e4616a28c3548
+Classic hot 2 10e45a74e8a70dce
+Classic hot close 1 8624fb9df6120b41
+Classic hot close 2 d3cebb20b50a797e
+Classic held close 1 8c911d0dd2c0e9e9
+Classic held close 2 80945f4396338a9e
+Classic adder hot 1 aac9c993437c3fe0
+Classic adder hot 2 582a85cbe4884bee
+Classic adder held 1 4e28d114f2afa620
+Classic adder held 2 f35f40bc2d66820e
+Classic dragged 1 6b8cdc56ac45b8dd
+Classic dragged 2 8e96fbbad730f0ee
+Classic plain adder 1 34d20ce79d2a2c59
+Classic plain adder 2 976bfe2af37641de
+Classic plain adder hot 1 8ea7c255c2be98e9
+Classic plain adder hot 2 d40d31b824bdbf3e
+Blue Blue open and closed 1 571de9db4244e42b
+Blue Blue open and closed 2 b52424db3ad062ab
+Blue Blue hot 1 22a790e8dd0dc87b
+Blue Blue hot 2 8989176cd5220af1
+Blue Blue hot close 1 8589369bc4e505c2
+Blue Blue hot close 2 7fbdde980cf25455
+Blue Blue held close 1 53aae7d80887292b
+Blue Blue held close 2 cbe1ce2517bfdbfb
+Blue Blue adder hot 1 74ce20a72e3f94cc
+Blue Blue adder hot 2 0204bebddd44e73e
+Blue Blue adder held 1 62456ebe245f9dd3
+Blue Blue adder held 2 5c881ff1c652484f
+Blue Blue dragged 1 977b86ffc20b7ede
+Blue Blue dragged 2 234de8790826aa05
+Blue Blue plain adder 1 e678e4521d2ef3b2
+Blue Blue plain adder 2 08428a3db643e9f3
+Blue Blue plain adder hot 1 f23f6d2421ba5e5e
+Blue Blue plain adder hot 2 a18e5bdd06738b15
+Blue Olive open and closed 1 2b0d152aad2ebe3d
+Blue Olive open and closed 2 f47890f160460d16
+Blue Olive hot 1 c61f01e781f17b33
+Blue Olive hot 2 1b516384f0eb1de0
+Blue Olive hot close 1 9871dc494b1abd8e
+Blue Olive hot close 2 6c6a74719729162a
+Blue Olive held close 1 78fa69e67642a4cd
+Blue Olive held close 2 6f3bc2d71fbd0d9e
+Blue Olive adder hot 1 1f534ddb1055eb8f
+Blue Olive adder hot 2 5bdc217fea2ce346
+Blue Olive adder held 1 0f26f87b9376c3be
+Blue Olive adder held 2 80f4eba51647dfe5
+Blue Olive dragged 1 bc98bd80b1e33978
+Blue Olive dragged 2 45ebef45dcc53bcb
+Blue Olive plain adder 1 bec1f719cd46006c
+Blue Olive plain adder 2 21458867d6aeadde
+Blue Olive plain adder hot 1 a6d0603bd89962d1
+Blue Olive plain adder hot 2 e8d649186b4cbdb8
+Blue Silver open and closed 1 8a2cb71d27688b87
+Blue Silver open and closed 2 3580c0a9c76546c9
+Blue Silver hot 1 991ccd629353f1bf
+Blue Silver hot 2 b800d505180eb50c
+Blue Silver hot close 1 45b54a349691ac39
+Blue Silver hot close 2 e79e2e687bbf10a1
+Blue Silver held close 1 a047b7d154bbb33f
+Blue Silver held close 2 a23f78ab956d0ca1
+Blue Silver adder hot 1 11042c14e236822b
+Blue Silver adder hot 2 5444c93a0f17c7c9
+Blue Silver adder held 1 b4b383c69c1fcab1
+Blue Silver adder held 2 ae7878d80c871a45
+Blue Silver dragged 1 82e6ca19272cec64
+Blue Silver dragged 2 e5996ca0ba84f992
+Blue Silver plain adder 1 6e9bd6b75c923a01
+Blue Silver plain adder 2 817ab764d6e727d2
+Blue Silver plain adder hot 1 0ecd8fb743c85ba5
+Blue Silver plain adder hot 2 9555fe50dd0fac0a
+Blue Slate open and closed 1 fece8b1c247e9058
+Blue Slate open and closed 2 9138695170737938
+Blue Slate hot 1 d84e95d6b51e00b6
+Blue Slate hot 2 443896fe702d6daa
+Blue Slate hot close 1 d9c7b9dfd6beb82f
+Blue Slate hot close 2 29d52a1cdc91b100
+Blue Slate held close 1 48a5e98974c77f30
+Blue Slate held close 2 2d0cc62c8609fa68
+Blue Slate adder hot 1 4f8fb2ec77e6be3d
+Blue Slate adder hot 2 af5b12cc80310f7d
+Blue Slate adder held 1 59fd53af936418d3
+Blue Slate adder held 2 d3b6e5838ab152e0
+Blue Slate dragged 1 4404c6a21f1e7dbd
+Blue Slate dragged 2 607ef9435bfb70f4
+Blue Slate plain adder 1 f056bd5b9837c77c
+Blue Slate plain adder 2 4511f09850844b20
+Blue Slate plain adder hot 1 fbe4fb818dab6b4b
+Blue Slate plain adder hot 2 63af4ba533e7ea88
+Blue Sapphire open and closed 1 152796727256fdf3
+Blue Sapphire open and closed 2 a8146d8103c3e303
+Blue Sapphire hot 1 ee017ef0fdf76f62
+Blue Sapphire hot 2 64bf7bf980ff8df7
+Blue Sapphire hot close 1 6efad7b9fc4dfe63
+Blue Sapphire hot close 2 b2468617300c5e5f
+Blue Sapphire held close 1 ac89f35f2013d627
+Blue Sapphire held close 2 1705c8393302d90b
+Blue Sapphire adder hot 1 cf68b7fbc976f9eb
+Blue Sapphire adder hot 2 88e464dadd293945
+Blue Sapphire adder held 1 27e62dbd226645f4
+Blue Sapphire adder held 2 7a7df58ca123d159
+Blue Sapphire dragged 1 fb779698db7a9e27
+Blue Sapphire dragged 2 c8be31cf4baf04e8
+Blue Sapphire plain adder 1 227e16b504846a1c
+Blue Sapphire plain adder 2 7cff65ae8c459a60
+Blue Sapphire plain adder hot 1 b05333bce4bc2f0c
+Blue Sapphire plain adder hot 2 67abeadcbc80284c
+Blue Obsidian open and closed 1 152796727256fdf3
+Blue Obsidian open and closed 2 a8146d8103c3e303
+Blue Obsidian hot 1 ee017ef0fdf76f62
+Blue Obsidian hot 2 64bf7bf980ff8df7
+Blue Obsidian hot close 1 6efad7b9fc4dfe63
+Blue Obsidian hot close 2 b2468617300c5e5f
+Blue Obsidian held close 1 ac89f35f2013d627
+Blue Obsidian held close 2 1705c8393302d90b
+Blue Obsidian adder hot 1 cf68b7fbc976f9eb
+Blue Obsidian adder hot 2 88e464dadd293945
+Blue Obsidian adder held 1 27e62dbd226645f4
+Blue Obsidian adder held 2 7a7df58ca123d159
+Blue Obsidian dragged 1 fb779698db7a9e27
+Blue Obsidian dragged 2 c8be31cf4baf04e8
+Blue Obsidian plain adder 1 227e16b504846a1c
+Blue Obsidian plain adder 2 7cff65ae8c459a60
+Blue Obsidian plain adder hot 1 b05333bce4bc2f0c
+Blue Obsidian plain adder hot 2 67abeadcbc80284c
+Blue Ember open and closed 1 a76737deeee8154f
+Blue Ember open and closed 2 6da8e2e0ee9e2607
+Blue Ember hot 1 c8260527f23d31b0
+Blue Ember hot 2 a1e8546d44ef3af0
+Blue Ember hot close 1 08ba0c93bc420bf4
+Blue Ember hot close 2 35aac0e8e487c7b7
+Blue Ember held close 1 7d5a759d2f77696f
+Blue Ember held close 2 4d8f5af9734fbf17
+Blue Ember adder hot 1 0e31f016e3cb9a26
+Blue Ember adder hot 2 03e6229e3acbc6ce
+Blue Ember adder held 1 d8ad6ffc20d2550c
+Blue Ember adder held 2 17c1c6e18a4495ff
+Blue Ember dragged 1 d765a3bb1f4bfcbe
+Blue Ember dragged 2 306a9c943aab46be
+Blue Ember plain adder 1 0aede92dd17dfb5f
+Blue Ember plain adder 2 9f58f93a01dcaf0f
+Blue Ember plain adder hot 1 538aa32679a23dd8
+Blue Ember plain adder hot 2 7ef07692d4e0741f
+Blue Cobalt open and closed 1 152796727256fdf3
+Blue Cobalt open and closed 2 a8146d8103c3e303
+Blue Cobalt hot 1 ee017ef0fdf76f62
+Blue Cobalt hot 2 64bf7bf980ff8df7
+Blue Cobalt hot close 1 6efad7b9fc4dfe63
+Blue Cobalt hot close 2 b2468617300c5e5f
+Blue Cobalt held close 1 ac89f35f2013d627
+Blue Cobalt held close 2 1705c8393302d90b
+Blue Cobalt adder hot 1 cf68b7fbc976f9eb
+Blue Cobalt adder hot 2 88e464dadd293945
+Blue Cobalt adder held 1 27e62dbd226645f4
+Blue Cobalt adder held 2 7a7df58ca123d159
+Blue Cobalt dragged 1 fb779698db7a9e27
+Blue Cobalt dragged 2 c8be31cf4baf04e8
+Blue Cobalt plain adder 1 227e16b504846a1c
+Blue Cobalt plain adder 2 7cff65ae8c459a60
+Blue Cobalt plain adder hot 1 b05333bce4bc2f0c
+Blue Cobalt plain adder hot 2 67abeadcbc80284c
+Blue Carbon open and closed 1 152796727256fdf3
+Blue Carbon open and closed 2 a8146d8103c3e303
+Blue Carbon hot 1 ee017ef0fdf76f62
+Blue Carbon hot 2 64bf7bf980ff8df7
+Blue Carbon hot close 1 6efad7b9fc4dfe63
+Blue Carbon hot close 2 b2468617300c5e5f
+Blue Carbon held close 1 ac89f35f2013d627
+Blue Carbon held close 2 1705c8393302d90b
+Blue Carbon adder hot 1 cf68b7fbc976f9eb
+Blue Carbon adder hot 2 88e464dadd293945
+Blue Carbon adder held 1 27e62dbd226645f4
+Blue Carbon adder held 2 7a7df58ca123d159
+Blue Carbon dragged 1 fb779698db7a9e27
+Blue Carbon dragged 2 c8be31cf4baf04e8
+Blue Carbon plain adder 1 227e16b504846a1c
+Blue Carbon plain adder 2 7cff65ae8c459a60
+Blue Carbon plain adder hot 1 b05333bce4bc2f0c
+Blue Carbon plain adder hot 2 67abeadcbc80284c
+Blue Steel open and closed 1 a882c121e5db7afb
+Blue Steel open and closed 2 20225fed5d872e7c
+Blue Steel hot 1 d0f4337ac447a6fb
+Blue Steel hot 2 eb187d6f2d8bcddb
+Blue Steel hot close 1 7b4a3407d70aa15d
+Blue Steel hot close 2 f1a6703f6055c694
+Blue Steel held close 1 3dfebd0973e0374b
+Blue Steel held close 2 12070ea3658a67fc
+Blue Steel adder hot 1 7997040fc32c9f2c
+Blue Steel adder hot 2 b3c95d1437716537
+Blue Steel adder held 1 b496a23b6eed4e2c
+Blue Steel adder held 2 96102ef2dafbec2d
+Blue Steel dragged 1 f5ef6e0d2c2eb2e8
+Blue Steel dragged 2 8608dd834b6b2d72
+Blue Steel plain adder 1 0354e70ed79f39c4
+Blue Steel plain adder 2 ab34ebd8b2d3d87a
+Blue Steel plain adder hot 1 0c1d0e6d6be01ce7
+Blue Steel plain adder hot 2 572d860cb2f71b56
+Glass Light on glass open and closed 1 b2640128968d1a2d
+Glass Light on glass open and closed 2 03a5fac0dc62314e
+Glass Light on glass hot 1 080822758755682c
+Glass Light on glass hot 2 ea4baf00beb18dcc
+Glass Light on glass hot close 1 55ec131f156b3c80
+Glass Light on glass hot close 2 4bf6979048b3c8c3
+Glass Light on glass held close 1 df6680fa725ab4f0
+Glass Light on glass held close 2 0b3b0a770c1d2376
+Glass Light on glass adder hot 1 317da04275fc7b99
+Glass Light on glass adder hot 2 0f88753e1812f73a
+Glass Light on glass adder held 1 679c452158c7c39d
+Glass Light on glass adder held 2 018f9a2d10879e16
+Glass Light on glass dragged 1 7b634eb4aa7a9b30
+Glass Light on glass dragged 2 e11605df3038111c
+Glass Light on glass plain adder 1 e888a464a3bfe4c6
+Glass Light on glass plain adder 2 4de2200ecde91bb4
+Glass Light on glass plain adder hot 1 abee0176a2f1203a
+Glass Light on glass plain adder hot 2 9251b561d4f4be84
+Glass Light on face open and closed 1 ee471b15d8821fed
+Glass Light on face open and closed 2 456dea34b8bfdfa3
+Glass Light on face hot 1 c0d128f2b91029bb
+Glass Light on face hot 2 bc8c2e4d413621fb
+Glass Light on face hot close 1 421cddc4c015c28d
+Glass Light on face hot close 2 250d22273bec4143
+Glass Light on face held close 1 2380868d878256bd
+Glass Light on face held close 2 3d4bac5ebd0bb553
+Glass Light on face adder hot 1 b20deb578a2007df
+Glass Light on face adder hot 2 d0dad17ff072de8d
+Glass Light on face adder held 1 919fd9a1065ce56f
+Glass Light on face adder held 2 353945fa82e17f67
+Glass Light on face dragged 1 85edb5bc52d2a05e
+Glass Light on face dragged 2 99c3528c9fff3aab
+Glass Light on face plain adder 1 91448d76fd261063
+Glass Light on face plain adder 2 33215c4a950e823e
+Glass Light on face plain adder hot 1 48d6b9b4e1930e6b
+Glass Light on face plain adder hot 2 f827c60ca04011d2
+Glass Dark on glass open and closed 1 f507e8cebe8011f6
+Glass Dark on glass open and closed 2 c25de98836dacdb4
+Glass Dark on glass hot 1 82880cea29106bfa
+Glass Dark on glass hot 2 dc9895b85fffdd8d
+Glass Dark on glass hot close 1 71a0c454df3d3b57
+Glass Dark on glass hot close 2 8e5a729c6de2bd06
+Glass Dark on glass held close 1 5fcab1d28f3e9506
+Glass Dark on glass held close 2 055dd45ce74b4e30
+Glass Dark on glass adder hot 1 cfb6779449826f2c
+Glass Dark on glass adder hot 2 c5aa6b5bdff65afc
+Glass Dark on glass adder held 1 709c30096055c392
+Glass Dark on glass adder held 2 26b388f74da172ac
+Glass Dark on glass dragged 1 d6f8cecf850e3648
+Glass Dark on glass dragged 2 969f29c8dd97c04b
+Glass Dark on glass plain adder 1 beda0d49a09b7c22
+Glass Dark on glass plain adder 2 cd4ba32e898159b8
+Glass Dark on glass plain adder hot 1 1a14d8c66c149242
+Glass Dark on glass plain adder hot 2 3c7233bd58e488e4
+Glass Dark on face open and closed 1 005e33e621d4ee64
+Glass Dark on face open and closed 2 e88ef0e97b44aae2
+Glass Dark on face hot 1 4cb4161e9516c787
+Glass Dark on face hot 2 95eaf8d0531aee62
+Glass Dark on face hot close 1 530b04876c0bc345
+Glass Dark on face hot close 2 d70455d31b6cb352
+Glass Dark on face held close 1 061f9f722c3fa59c
+Glass Dark on face held close 2 062350869b5f7242
+Glass Dark on face adder hot 1 2837e0af87429533
+Glass Dark on face adder hot 2 62ff24bc1ddb2efc
+Glass Dark on face adder held 1 9d821d61a31d37a6
+Glass Dark on face adder held 2 92b022d548138b6d
+Glass Dark on face dragged 1 118e7f316049b4e5
+Glass Dark on face dragged 2 b96fa20cc99af9d2
+Glass Dark on face plain adder 1 655feb96131040aa
+Glass Dark on face plain adder 2 50ab817c97b38e8a
+Glass Dark on face plain adder hot 1 c74fc5ce3e8712da
+Glass Dark on face plain adder hot 2 4d1ea7d8d03a3dd6

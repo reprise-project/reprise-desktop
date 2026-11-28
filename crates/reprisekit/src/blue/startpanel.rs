@@ -560,18 +560,7 @@ mod tests {
         (c, l)
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut x = 0xCBF2_9CE4_8422_2325_u64;
-        for v in [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-        {
-            for b in v.to_le_bytes() {
-                x = (x ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3);
-            }
-        }
-        x
-    }
+    use crate::pins::fnv;
 
     const STATES: [(Option<Spot>, Option<Spot>); 6] = [
         (None, None),

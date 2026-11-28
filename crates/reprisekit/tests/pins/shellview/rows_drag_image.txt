@@ -1,4 +1,4 @@
-List @1 140b9d2a1c8e6cd8
-List @2 affd932fe6e8831a
-Details @1 014913601434182c
-Details @2 a33fd748a83f86a2
+List @1 656b7e2fda5d98b9
+List @2 d9ebf43d3c9835ef
+Details @1 1aad20bdc1a1448d
+Details @2 1bf93025319c2bf7

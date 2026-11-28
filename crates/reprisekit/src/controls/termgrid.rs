@@ -759,19 +759,7 @@ mod tests {
         baseline: 12,
     };
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let words = [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied());
-        for w in words {
-            for b in w.to_le_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0000_0100_0000_01b3);
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn write(snap: &mut Snapshot, row: usize, col: usize, s: &str, flags: Flags) {
         for (i, ch) in s.chars().enumerate() {

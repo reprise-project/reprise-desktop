@@ -1,320 +1,320 @@
-Blue SpinUp Normal 1 03e6e84875544c99
-Blue SpinUp Hot 1 2387a0bd6afee4f1
-Blue SpinUp Pressed 1 d1cde92cb79bd5a4
-Blue SpinUp Disabled 1 3248259d93154d6c
-Blue SpinUp Normal 2 be433b4c9efabb91
-Blue SpinUp Hot 2 5f16aec800ec43dc
-Blue SpinUp Pressed 2 2938edb47d18ca70
-Blue SpinUp Disabled 2 8a96e230b752355b
-Blue SpinDown Normal 1 52898e9ec18b70b1
-Blue SpinDown Hot 1 7c3a027c585c0195
-Blue SpinDown Pressed 1 dac9ed3d8f512611
-Blue SpinDown Disabled 1 00adebd40a8d2997
-Blue SpinDown Normal 2 a8ea2dc1d25a3702
-Blue SpinDown Hot 2 f2a5a2d4ffdbf5c5
-Blue SpinDown Pressed 2 bd1c6800ccd53455
-Blue SpinDown Disabled 2 90f08efd79f80bb7
-Olive SpinUp Normal 1 fb687f434234f193
-Olive SpinUp Hot 1 6aaf27e4fbb1b98d
-Olive SpinUp Pressed 1 1dca35eb7ef74b0b
-Olive SpinUp Disabled 1 3248259d93154d6c
-Olive SpinUp Normal 2 60787f63ed5fd440
-Olive SpinUp Hot 2 7fd8dea7bddf9035
-Olive SpinUp Pressed 2 94e6fe0ff8e8039e
-Olive SpinUp Disabled 2 8a96e230b752355b
-Olive SpinDown Normal 1 81aef30492eb389d
-Olive SpinDown Hot 1 0f0db53a9bdfe186
-Olive SpinDown Pressed 1 709d805402689211
-Olive SpinDown Disabled 1 00adebd40a8d2997
-Olive SpinDown Normal 2 1c2986011555dbcd
-Olive SpinDown Hot 2 3b3d34345518db87
-Olive SpinDown Pressed 2 8ee686fa014e5d14
-Olive SpinDown Disabled 2 90f08efd79f80bb7
-Silver SpinUp Normal 1 786a92064af50939
-Silver SpinUp Hot 1 d0780bfe93dda67b
-Silver SpinUp Pressed 1 52e5f0a754994547
-Silver SpinUp Disabled 1 745ef6793c94aedd
-Silver SpinUp Normal 2 5b8487a702b95c08
-Silver SpinUp Hot 2 a418fde1f77ea6da
-Silver SpinUp Pressed 2 f9aa886922e62f6e
-Silver SpinUp Disabled 2 3ad8da5af05fe14b
-Silver SpinDown Normal 1 c51fd6f402da0fbf
-Silver SpinDown Hot 1 5ab77eb7b9740e84
-Silver SpinDown Pressed 1 a31fa7a83aade87c
-Silver SpinDown Disabled 1 00adebd40a8d2997
-Silver SpinDown Normal 2 9a5bded16dc2fbff
-Silver SpinDown Hot 2 9931fa201db1f7b0
-Silver SpinDown Pressed 2 0d7abda99c10bd8a
-Silver SpinDown Disabled 2 90f08efd79f80bb7
-Slate SpinUp Normal 1 461ec2567adc02f6
-Slate SpinUp Hot 1 e21d15465a20b468
-Slate SpinUp Pressed 1 38e496dc4c970618
-Slate SpinUp Disabled 1 82f76e5909d2649c
-Slate SpinUp Normal 2 2980b0ef0b7b5f5d
-Slate SpinUp Hot 2 3add9f29930ca0e8
-Slate SpinUp Pressed 2 924db94c6afc4ad3
-Slate SpinUp Disabled 2 2fb9527c5b31e443
-Slate SpinDown Normal 1 05f59b1fa56faa07
-Slate SpinDown Hot 1 64d566782ebcde23
-Slate SpinDown Pressed 1 5431041a8c07793a
-Slate SpinDown Disabled 1 f827ea1db41ff70c
-Slate SpinDown Normal 2 54e4e10d73b389b5
-Slate SpinDown Hot 2 577a58be72149fd4
-Slate SpinDown Pressed 2 e22cd1d71d9764ef
-Slate SpinDown Disabled 2 6e9ef254cd51c503
-Sapphire SpinUp Normal 1 f2eb90198b194ae6
-Sapphire SpinUp Hot 1 61e0f078a005b0e7
-Sapphire SpinUp Pressed 1 d8005c71b061239c
-Sapphire SpinUp Disabled 1 7538ca7b3592986b
-Sapphire SpinUp Normal 2 0d04a01046f5988a
-Sapphire SpinUp Hot 2 5f5fa0cd5dd0ca30
-Sapphire SpinUp Pressed 2 134b1ad09c0be932
-Sapphire SpinUp Disabled 2 1d2b33e7f4141bde
-Sapphire SpinDown Normal 1 dd2ddeb7b9e45198
-Sapphire SpinDown Hot 1 80892ec66a1d2143
-Sapphire SpinDown Pressed 1 e15db21b3d0d7b66
-Sapphire SpinDown Disabled 1 7f3edc081a519fd5
-Sapphire SpinDown Normal 2 05d84b0fc1cb6de6
-Sapphire SpinDown Hot 2 e54e7e7f8db59a43
-Sapphire SpinDown Pressed 2 3f9c90da12a4c9ba
-Sapphire SpinDown Disabled 2 d4c8e1f9afdfc221
-Obsidian SpinUp Normal 1 f2eb90198b194ae6
-Obsidian SpinUp Hot 1 61e0f078a005b0e7
-Obsidian SpinUp Pressed 1 d8005c71b061239c
-Obsidian SpinUp Disabled 1 7538ca7b3592986b
-Obsidian SpinUp Normal 2 0d04a01046f5988a
-Obsidian SpinUp Hot 2 5f5fa0cd5dd0ca30
-Obsidian SpinUp Pressed 2 134b1ad09c0be932
-Obsidian SpinUp Disabled 2 1d2b33e7f4141bde
-Obsidian SpinDown Normal 1 dd2ddeb7b9e45198
-Obsidian SpinDown Hot 1 80892ec66a1d2143
-Obsidian SpinDown Pressed 1 e15db21b3d0d7b66
-Obsidian SpinDown Disabled 1 7f3edc081a519fd5
-Obsidian SpinDown Normal 2 05d84b0fc1cb6de6
-Obsidian SpinDown Hot 2 e54e7e7f8db59a43
-Obsidian SpinDown Pressed 2 3f9c90da12a4c9ba
-Obsidian SpinDown Disabled 2 d4c8e1f9afdfc221
-Ember SpinUp Normal 1 753b96820315af6d
-Ember SpinUp Hot 1 5897692f0995dd2e
-Ember SpinUp Pressed 1 59c4d71292bb9108
-Ember SpinUp Disabled 1 e05dd7fcffa63ff2
-Ember SpinUp Normal 2 b19a2aeb4372851c
-Ember SpinUp Hot 2 adc0c33536862b8a
-Ember SpinUp Pressed 2 a796274fa83fe942
-Ember SpinUp Disabled 2 57c81ad55b99aef9
-Ember SpinDown Normal 1 72ca5233161b55d6
-Ember SpinDown Hot 1 a74fd149e8bf0bb9
-Ember SpinDown Pressed 1 b320223a085703e0
-Ember SpinDown Disabled 1 0abf9cbc4b4e52c3
-Ember SpinDown Normal 2 129b872d1bc2164b
-Ember SpinDown Hot 2 bcc44137fc3f8aed
-Ember SpinDown Pressed 2 27c46b0544205bfd
-Ember SpinDown Disabled 2 213fd73dfaa280c8
-Cobalt SpinUp Normal 1 f2eb90198b194ae6
-Cobalt SpinUp Hot 1 61e0f078a005b0e7
-Cobalt SpinUp Pressed 1 d8005c71b061239c
-Cobalt SpinUp Disabled 1 7538ca7b3592986b
-Cobalt SpinUp Normal 2 0d04a01046f5988a
-Cobalt SpinUp Hot 2 5f5fa0cd5dd0ca30
-Cobalt SpinUp Pressed 2 134b1ad09c0be932
-Cobalt SpinUp Disabled 2 1d2b33e7f4141bde
-Cobalt SpinDown Normal 1 dd2ddeb7b9e45198
-Cobalt SpinDown Hot 1 80892ec66a1d2143
-Cobalt SpinDown Pressed 1 e15db21b3d0d7b66
-Cobalt SpinDown Disabled 1 7f3edc081a519fd5
-Cobalt SpinDown Normal 2 05d84b0fc1cb6de6
-Cobalt SpinDown Hot 2 e54e7e7f8db59a43
-Cobalt SpinDown Pressed 2 3f9c90da12a4c9ba
-Cobalt SpinDown Disabled 2 d4c8e1f9afdfc221
-Carbon SpinUp Normal 1 f2eb90198b194ae6
-Carbon SpinUp Hot 1 61e0f078a005b0e7
-Carbon SpinUp Pressed 1 d8005c71b061239c
-Carbon SpinUp Disabled 1 7538ca7b3592986b
-Carbon SpinUp Normal 2 0d04a01046f5988a
-Carbon SpinUp Hot 2 5f5fa0cd5dd0ca30
-Carbon SpinUp Pressed 2 134b1ad09c0be932
-Carbon SpinUp Disabled 2 1d2b33e7f4141bde
-Carbon SpinDown Normal 1 dd2ddeb7b9e45198
-Carbon SpinDown Hot 1 80892ec66a1d2143
-Carbon SpinDown Pressed 1 e15db21b3d0d7b66
-Carbon SpinDown Disabled 1 7f3edc081a519fd5
-Carbon SpinDown Normal 2 05d84b0fc1cb6de6
-Carbon SpinDown Hot 2 e54e7e7f8db59a43
-Carbon SpinDown Pressed 2 3f9c90da12a4c9ba
-Carbon SpinDown Disabled 2 d4c8e1f9afdfc221
-Steel SpinUp Normal 1 502bc57bb9d06f2f
-Steel SpinUp Hot 1 b936596169816fe9
-Steel SpinUp Pressed 1 8f6b82effedf233c
-Steel SpinUp Disabled 1 745ef6793c94aedd
-Steel SpinUp Normal 2 890160ed4380811b
-Steel SpinUp Hot 2 b637c36ff1038448
-Steel SpinUp Pressed 2 b784d42f81a944c1
-Steel SpinUp Disabled 2 3ad8da5af05fe14b
-Steel SpinDown Normal 1 2db79fceb28418fc
-Steel SpinDown Hot 1 48f3bf6955df6487
-Steel SpinDown Pressed 1 af8d11a78f655391
-Steel SpinDown Disabled 1 00adebd40a8d2997
-Steel SpinDown Normal 2 ace1309301c508d5
-Steel SpinDown Hot 2 ecececf8698dc7f4
-Steel SpinDown Pressed 2 a4caf3cb7ab9dffd
-Steel SpinDown Disabled 2 90f08efd79f80bb7
-Blue dark SpinUp Normal 1 3cea87e1a2133a5e
-Blue dark SpinUp Hot 1 5d7d7790581aaaca
-Blue dark SpinUp Pressed 1 28a3cee1447c117a
-Blue dark SpinUp Disabled 1 2aac7d51d0952a7e
-Blue dark SpinUp Normal 2 1fc32dc3a6960013
-Blue dark SpinUp Hot 2 fbccdb03afe4f881
-Blue dark SpinUp Pressed 2 19b957d96006e78e
-Blue dark SpinUp Disabled 2 12b8b7419867cfeb
-Blue dark SpinDown Normal 1 f4a9a26cc0ac0da6
-Blue dark SpinDown Hot 1 29a9da50007fdf7b
-Blue dark SpinDown Pressed 1 6c07f536943c9262
-Blue dark SpinDown Disabled 1 40cba11e556c5791
-Blue dark SpinDown Normal 2 89d50e6f25774416
-Blue dark SpinDown Hot 2 f1df688780678c1c
-Blue dark SpinDown Pressed 2 fdbf1464f86f9ead
-Blue dark SpinDown Disabled 2 bf2f62a6837dd8ef
-Olive dark SpinUp Normal 1 4714eb1b230e9c71
-Olive dark SpinUp Hot 1 260186bb88d48864
-Olive dark SpinUp Pressed 1 e5bc83802d40a22c
-Olive dark SpinUp Disabled 1 7da574d5f505bf8e
-Olive dark SpinUp Normal 2 e456a1b8c06c261d
-Olive dark SpinUp Hot 2 73d0aec0e89e8961
-Olive dark SpinUp Pressed 2 1705a927844d140c
-Olive dark SpinUp Disabled 2 db3279b4908aa9a3
-Olive dark SpinDown Normal 1 495e8ebafed34a1f
-Olive dark SpinDown Hot 1 b5883164cecca9e5
-Olive dark SpinDown Pressed 1 8117f40daedba388
-Olive dark SpinDown Disabled 1 c57871d00fe95860
-Olive dark SpinDown Normal 2 32f1fd428163efc0
-Olive dark SpinDown Hot 2 889e5b22fe12f792
-Olive dark SpinDown Pressed 2 1cdeb66f6839f4cc
-Olive dark SpinDown Disabled 2 20f70accf88a3b2c
-Silver dark SpinUp Normal 1 a886af4b46fdbddd
-Silver dark SpinUp Hot 1 a00e094b61a9e8ed
-Silver dark SpinUp Pressed 1 0ab1a373d26c542e
-Silver dark SpinUp Disabled 1 e89a1ed65eaa84b0
-Silver dark SpinUp Normal 2 49868049d1ca5ee4
-Silver dark SpinUp Hot 2 4bbf072f2930e035
-Silver dark SpinUp Pressed 2 35432ff3d568637f
-Silver dark SpinUp Disabled 2 f731ec570d7a16f7
-Silver dark SpinDown Normal 1 fc98b5bc6aa4f1cf
-Silver dark SpinDown Hot 1 b22b59176fef0a64
-Silver dark SpinDown Pressed 1 bb49f581f5701f1b
-Silver dark SpinDown Disabled 1 ccac489bf02eb231
-Silver dark SpinDown Normal 2 d87692edb7cc81ab
-Silver dark SpinDown Hot 2 476aa3fb8fab6c4c
-Silver dark SpinDown Pressed 2 67cd87a089018fc1
-Silver dark SpinDown Disabled 2 4c4063b87bb9c7f1
-Slate dark SpinUp Normal 1 c36fe6473b228a42
-Slate dark SpinUp Hot 1 636bda130d95400c
-Slate dark SpinUp Pressed 1 4ac3fe8dbf5cf9dc
-Slate dark SpinUp Disabled 1 9f285dd5bfe7c3dd
-Slate dark SpinUp Normal 2 e4f39dc38919ca5a
-Slate dark SpinUp Hot 2 9a298dc89a8ea492
-Slate dark SpinUp Pressed 2 44515e87e1a074f7
-Slate dark SpinUp Disabled 2 98f5d0e7e7e9ddab
-Slate dark SpinDown Normal 1 0fbf3131b82ceffa
-Slate dark SpinDown Hot 1 05cfa089346aec41
-Slate dark SpinDown Pressed 1 b05f21df75ae93c2
-Slate dark SpinDown Disabled 1 135c0598fc77a7b1
-Slate dark SpinDown Normal 2 131708a5a0ab0e2a
-Slate dark SpinDown Hot 2 2cfd3791e583991a
-Slate dark SpinDown Pressed 2 a6998470ced2d4e7
-Slate dark SpinDown Disabled 2 2d03f2b65f0840cb
-Sapphire dark SpinUp Normal 1 0e8619ed40dd26d8
-Sapphire dark SpinUp Hot 1 dd24d2461bcd0012
-Sapphire dark SpinUp Pressed 1 0868edc719f5f8fb
-Sapphire dark SpinUp Disabled 1 a6340742fa33e3be
-Sapphire dark SpinUp Normal 2 02e16a3d67c5f0ac
-Sapphire dark SpinUp Hot 2 c099e59bf89f154f
-Sapphire dark SpinUp Pressed 2 2f9b84a6361842ca
-Sapphire dark SpinUp Disabled 2 79af8a8acf87954b
-Sapphire dark SpinDown Normal 1 f61550b2be962b9f
-Sapphire dark SpinDown Hot 1 e719f98bf7ea5947
-Sapphire dark SpinDown Pressed 1 a7979014e503ce78
-Sapphire dark SpinDown Disabled 1 4439fbd80296aab2
-Sapphire dark SpinDown Normal 2 1b5bf9f949788c10
-Sapphire dark SpinDown Hot 2 bca89ea4b7627ba7
-Sapphire dark SpinDown Pressed 2 58b0f04882b5705a
-Sapphire dark SpinDown Disabled 2 e43c01f927d950be
-Obsidian dark SpinUp Normal 1 afdc968a45de3982
-Obsidian dark SpinUp Hot 1 56df9bbd266d86a4
-Obsidian dark SpinUp Pressed 1 24fe57c45de12ec7
-Obsidian dark SpinUp Disabled 1 3c61b6a5c7fb0603
-Obsidian dark SpinUp Normal 2 013b8d2a949a7968
-Obsidian dark SpinUp Hot 2 63d52564fbd2ecbb
-Obsidian dark SpinUp Pressed 2 13b0ce0156268c7a
-Obsidian dark SpinUp Disabled 2 14280ca8c01fedb2
-Obsidian dark SpinDown Normal 1 dbe8c7e60d1bd41f
-Obsidian dark SpinDown Hot 1 7a7365627aef24e6
-Obsidian dark SpinDown Pressed 1 a496eb83ea970b24
-Obsidian dark SpinDown Disabled 1 9a42f4ad9e2aeffe
-Obsidian dark SpinDown Normal 2 3af5927ae17e0032
-Obsidian dark SpinDown Hot 2 290a3082c302249b
-Obsidian dark SpinDown Pressed 2 2d261f748ac330da
-Obsidian dark SpinDown Disabled 2 bac67936508f5eee
-Ember dark SpinUp Normal 1 2c8d5de12eec3c87
-Ember dark SpinUp Hot 1 3cdb2bb5d806eabd
-Ember dark SpinUp Pressed 1 df97a74829c0e193
-Ember dark SpinUp Disabled 1 1e72e8c985763190
-Ember dark SpinUp Normal 2 0ec3552cdd95e0c9
-Ember dark SpinUp Hot 2 59b30de52a4e327b
-Ember dark SpinUp Pressed 2 48890517a612d651
-Ember dark SpinUp Disabled 2 b1109724020af077
-Ember dark SpinDown Normal 1 031efebbe6dd6775
-Ember dark SpinDown Hot 1 4dccbac60df3a2a5
-Ember dark SpinDown Pressed 1 14b94a5309cf11cb
-Ember dark SpinDown Disabled 1 a70bf3d1c9571457
-Ember dark SpinDown Normal 2 5cdcdeee6c68c803
-Ember dark SpinDown Hot 2 b61958137c138055
-Ember dark SpinDown Pressed 2 be6bec5b034d1c36
-Ember dark SpinDown Disabled 2 e5ca02391f297f90
-Cobalt dark SpinUp Normal 1 70cd47dc76b488c6
-Cobalt dark SpinUp Hot 1 fd08146de604d00d
-Cobalt dark SpinUp Pressed 1 24fe57c45de12ec7
-Cobalt dark SpinUp Disabled 1 2035f19f11a6b7cc
-Cobalt dark SpinUp Normal 2 61f35405074a3943
-Cobalt dark SpinUp Hot 2 f8d62049d7dc76bf
-Cobalt dark SpinUp Pressed 2 13b0ce0156268c7a
-Cobalt dark SpinUp Disabled 2 a85fb31a59c90c92
-Cobalt dark SpinDown Normal 1 f72740304c8cf64f
-Cobalt dark SpinDown Hot 1 6caa925f17e1b792
-Cobalt dark SpinDown Pressed 1 a496eb83ea970b24
-Cobalt dark SpinDown Disabled 1 aa361ced26debaa8
-Cobalt dark SpinDown Normal 2 f33804163292008e
-Cobalt dark SpinDown Hot 2 2da7633f25914b27
-Cobalt dark SpinDown Pressed 2 2d261f748ac330da
-Cobalt dark SpinDown Disabled 2 f64058a80115d3db
-Carbon dark SpinUp Normal 1 8dda7c0ac240e1c3
-Carbon dark SpinUp Hot 1 9838197a5f6b1b51
-Carbon dark SpinUp Pressed 1 462cda619043fe06
-Carbon dark SpinUp Disabled 1 bf64468fcd4671ca
-Carbon dark SpinUp Normal 2 b9505d9fe4a98291
-Carbon dark SpinUp Hot 2 978502c7ee1b7c42
-Carbon dark SpinUp Pressed 2 d3aa92ca32b39953
-Carbon dark SpinUp Disabled 2 7b0ca946631a02c6
-Carbon dark SpinDown Normal 1 44d37afff43ef551
-Carbon dark SpinDown Hot 1 32babb558703e355
-Carbon dark SpinDown Pressed 1 220932e352bfcb3d
-Carbon dark SpinDown Disabled 1 466d84c3df9da3af
-Carbon dark SpinDown Normal 2 698e65819ffab04e
-Carbon dark SpinDown Hot 2 828fee519003c921
-Carbon dark SpinDown Pressed 2 594cee29474f9b26
-Carbon dark SpinDown Disabled 2 70aae453774f1ae9
-Steel dark SpinUp Normal 1 5281eed3b755af8f
-Steel dark SpinUp Hot 1 d61a3c3c7fd17faa
-Steel dark SpinUp Pressed 1 46ac844c1fb17bc2
-Steel dark SpinUp Disabled 1 42fd8d255c932137
-Steel dark SpinUp Normal 2 2ebf6d33f244b167
-Steel dark SpinUp Hot 2 92c5f51f6a541baf
-Steel dark SpinUp Pressed 2 e2cc681af702fcde
-Steel dark SpinUp Disabled 2 6263664cbcef8507
-Steel dark SpinDown Normal 1 e49a8a5e77870833
-Steel dark SpinDown Hot 1 2da07c937d48e5e1
-Steel dark SpinDown Pressed 1 5487e85037c5e0a3
-Steel dark SpinDown Disabled 1 e27b9690f1054bc9
-Steel dark SpinDown Normal 2 5d4bef57c0a058ed
-Steel dark SpinDown Hot 2 403f8d7c78d7b44c
-Steel dark SpinDown Pressed 2 2c6966f434aae811
-Steel dark SpinDown Disabled 2 a4e09460f9f4d754
+Blue SpinUp Normal 1 028303af72c2a230
+Blue SpinUp Hot 1 4b942121924f491c
+Blue SpinUp Pressed 1 f4d53803328a5f45
+Blue SpinUp Disabled 1 518745d50cc1f291
+Blue SpinUp Normal 2 0a71f70a06cb815c
+Blue SpinUp Hot 2 5c74a5a207dd7cb9
+Blue SpinUp Pressed 2 da1276df9c2f0c65
+Blue SpinUp Disabled 2 d423fe2defd3800a
+Blue SpinDown Normal 1 6aa74dbc7103bdb4
+Blue SpinDown Hot 1 8159ee2af10a09c4
+Blue SpinDown Pressed 1 50817550ec1e7cbc
+Blue SpinDown Disabled 1 f5e12c4b94378646
+Blue SpinDown Normal 2 30b98cbef851d8c7
+Blue SpinDown Hot 2 192206f5fcfa5ef8
+Blue SpinDown Pressed 2 3a20fdb614bb9270
+Blue SpinDown Disabled 2 1a324dfb850c807e
+Olive SpinUp Normal 1 1dccb06a79f6d5da
+Olive SpinUp Hot 1 6e4bf6606680f540
+Olive SpinUp Pressed 1 e809cfa686c94966
+Olive SpinUp Disabled 1 518745d50cc1f291
+Olive SpinUp Normal 2 48f1e59401f8ceb1
+Olive SpinUp Hot 2 cec1746a2ff58d54
+Olive SpinUp Pressed 2 60d85792c287b1fb
+Olive SpinUp Disabled 2 d423fe2defd3800a
+Olive SpinDown Normal 1 b367cde63e2ccd80
+Olive SpinDown Hot 1 08b8dbcba1598873
+Olive SpinDown Pressed 1 da81dec9667de7ec
+Olive SpinDown Disabled 1 f5e12c4b94378646
+Olive SpinDown Normal 2 43fdad4cdad88e50
+Olive SpinDown Hot 2 520d76820b035f5e
+Olive SpinDown Pressed 2 570c9a627162d425
+Olive SpinDown Disabled 2 1a324dfb850c807e
+Silver SpinUp Normal 1 ee4283b054149f80
+Silver SpinUp Hot 1 0c962d5ae5a219d2
+Silver SpinUp Pressed 1 e390ea77887a46ca
+Silver SpinUp Disabled 1 17957aa2a52bc7ec
+Silver SpinUp Normal 2 f86c291a0e6d316d
+Silver SpinUp Hot 2 5d71d6e6a37439b3
+Silver SpinUp Pressed 2 55e4aac80363fd8b
+Silver SpinUp Disabled 2 318ee4c48f25bbd2
+Silver SpinDown Normal 1 203d23e0b9215e3a
+Silver SpinDown Hot 1 01031d5d878b3a3d
+Silver SpinDown Pressed 1 2917cba399b0a8e9
+Silver SpinDown Disabled 1 f5e12c4b94378646
+Silver SpinDown Normal 2 a3f5e968c12ff436
+Silver SpinDown Hot 2 d55e99fd9c39b5fd
+Silver SpinDown Pressed 2 8e539edaad6a9b3b
+Silver SpinDown Disabled 2 1a324dfb850c807e
+Slate SpinUp Normal 1 3c1dd2d9fbbb5d4f
+Slate SpinUp Hot 1 63894559ffbf7191
+Slate SpinUp Pressed 1 30d48258c827bb3d
+Slate SpinUp Disabled 1 518993c89b8f4c41
+Slate SpinUp Normal 2 210fdeda93765690
+Slate SpinUp Hot 2 677ecd88d40929a5
+Slate SpinUp Pressed 2 e85939740ee2267a
+Slate SpinUp Disabled 2 be358b5279f20a12
+Slate SpinDown Normal 1 46e9f889077022de
+Slate SpinDown Hot 1 5ae2451e23c7ad92
+Slate SpinDown Pressed 1 72a3c6acfc41ebcb
+Slate SpinDown Disabled 1 84773a9ae21d68f1
+Slate SpinDown Normal 2 c9ba6cd540af93d0
+Slate SpinDown Hot 2 752d4e188afbaab9
+Slate SpinDown Pressed 2 604d31a18b427276
+Slate SpinDown Disabled 2 85b5c873e9b44b52
+Sapphire SpinUp Normal 1 e8f529e743f529d3
+Sapphire SpinUp Hot 1 220553f48c138742
+Sapphire SpinUp Pressed 1 c2e9de6189a7cc89
+Sapphire SpinUp Disabled 1 e661edda27567cf2
+Sapphire SpinUp Normal 2 8ceef5c231f108c7
+Sapphire SpinUp Hot 2 1bc5ccae72dc0fe1
+Sapphire SpinUp Pressed 2 74534cebc17e9e1b
+Sapphire SpinUp Disabled 2 874531c817d0a9f7
+Sapphire SpinDown Normal 1 b2d10e79f74fb45d
+Sapphire SpinDown Hot 1 38f1c0c7dcaffcd6
+Sapphire SpinDown Pressed 1 fc771bca69591493
+Sapphire SpinDown Disabled 1 f007f87631c302f4
+Sapphire SpinDown Normal 2 c950d2515b37f7ff
+Sapphire SpinDown Hot 2 7eb6fbf38bed995a
+Sapphire SpinDown Pressed 2 f3ca0dba8732ec9f
+Sapphire SpinDown Disabled 2 b482ac75f35851e0
+Obsidian SpinUp Normal 1 e8f529e743f529d3
+Obsidian SpinUp Hot 1 220553f48c138742
+Obsidian SpinUp Pressed 1 c2e9de6189a7cc89
+Obsidian SpinUp Disabled 1 e661edda27567cf2
+Obsidian SpinUp Normal 2 8ceef5c231f108c7
+Obsidian SpinUp Hot 2 1bc5ccae72dc0fe1
+Obsidian SpinUp Pressed 2 74534cebc17e9e1b
+Obsidian SpinUp Disabled 2 874531c817d0a9f7
+Obsidian SpinDown Normal 1 b2d10e79f74fb45d
+Obsidian SpinDown Hot 1 38f1c0c7dcaffcd6
+Obsidian SpinDown Pressed 1 fc771bca69591493
+Obsidian SpinDown Disabled 1 f007f87631c302f4
+Obsidian SpinDown Normal 2 c950d2515b37f7ff
+Obsidian SpinDown Hot 2 7eb6fbf38bed995a
+Obsidian SpinDown Pressed 2 f3ca0dba8732ec9f
+Obsidian SpinDown Disabled 2 b482ac75f35851e0
+Ember SpinUp Normal 1 b22370f8ece9d070
+Ember SpinUp Hot 1 0279077b65ce0b87
+Ember SpinUp Pressed 1 b553f3de33a8ce15
+Ember SpinUp Disabled 1 4a7a5e27efd29feb
+Ember SpinUp Normal 2 55d1950591eb7689
+Ember SpinUp Hot 2 e366e5db5498f5a7
+Ember SpinUp Pressed 2 5a2bb2b91b5d0b7b
+Ember SpinUp Disabled 2 9db307fed503683c
+Ember SpinDown Normal 1 09dd3f9806a0f857
+Ember SpinDown Hot 1 4180d9f2b23e1e08
+Ember SpinDown Pressed 1 92a65a1382fe8b35
+Ember SpinDown Disabled 1 4ed29b5a3641df1a
+Ember SpinDown Normal 2 999af16d90113ba2
+Ember SpinDown Hot 2 c0cddde1ceca70a0
+Ember SpinDown Pressed 2 bf6f522474608f88
+Ember SpinDown Disabled 2 6b314efb1c19578d
+Cobalt SpinUp Normal 1 e8f529e743f529d3
+Cobalt SpinUp Hot 1 220553f48c138742
+Cobalt SpinUp Pressed 1 c2e9de6189a7cc89
+Cobalt SpinUp Disabled 1 e661edda27567cf2
+Cobalt SpinUp Normal 2 8ceef5c231f108c7
+Cobalt SpinUp Hot 2 1bc5ccae72dc0fe1
+Cobalt SpinUp Pressed 2 74534cebc17e9e1b
+Cobalt SpinUp Disabled 2 874531c817d0a9f7
+Cobalt SpinDown Normal 1 b2d10e79f74fb45d
+Cobalt SpinDown Hot 1 38f1c0c7dcaffcd6
+Cobalt SpinDown Pressed 1 fc771bca69591493
+Cobalt SpinDown Disabled 1 f007f87631c302f4
+Cobalt SpinDown Normal 2 c950d2515b37f7ff
+Cobalt SpinDown Hot 2 7eb6fbf38bed995a
+Cobalt SpinDown Pressed 2 f3ca0dba8732ec9f
+Cobalt SpinDown Disabled 2 b482ac75f35851e0
+Carbon SpinUp Normal 1 e8f529e743f529d3
+Carbon SpinUp Hot 1 220553f48c138742
+Carbon SpinUp Pressed 1 c2e9de6189a7cc89
+Carbon SpinUp Disabled 1 e661edda27567cf2
+Carbon SpinUp Normal 2 8ceef5c231f108c7
+Carbon SpinUp Hot 2 1bc5ccae72dc0fe1
+Carbon SpinUp Pressed 2 74534cebc17e9e1b
+Carbon SpinUp Disabled 2 874531c817d0a9f7
+Carbon SpinDown Normal 1 b2d10e79f74fb45d
+Carbon SpinDown Hot 1 38f1c0c7dcaffcd6
+Carbon SpinDown Pressed 1 fc771bca69591493
+Carbon SpinDown Disabled 1 f007f87631c302f4
+Carbon SpinDown Normal 2 c950d2515b37f7ff
+Carbon SpinDown Hot 2 7eb6fbf38bed995a
+Carbon SpinDown Pressed 2 f3ca0dba8732ec9f
+Carbon SpinDown Disabled 2 b482ac75f35851e0
+Steel SpinUp Normal 1 0523fe0276a1451e
+Steel SpinUp Hot 1 147d729c8a3eebc4
+Steel SpinUp Pressed 1 46ae7e506ac96261
+Steel SpinUp Disabled 1 17957aa2a52bc7ec
+Steel SpinUp Normal 2 3b777325d88102aa
+Steel SpinUp Hot 2 ce1756273f747bcd
+Steel SpinUp Pressed 2 f000f9d0d543774c
+Steel SpinUp Disabled 2 318ee4c48f25bbd2
+Steel SpinDown Normal 1 2d436ca5bfac37a1
+Steel SpinDown Hot 1 4d35f71da6b60d2e
+Steel SpinDown Pressed 1 13bd2ab2d8242020
+Steel SpinDown Disabled 1 f5e12c4b94378646
+Steel SpinDown Normal 2 ac92793fede9d200
+Steel SpinDown Hot 2 6eff470921dd88c9
+Steel SpinDown Pressed 2 5afc38e0cc2b535c
+Steel SpinDown Disabled 2 1a324dfb850c807e
+Blue dark SpinUp Normal 1 a01dcd941a83116f
+Blue dark SpinUp Hot 1 b61b5a987c2b8ec3
+Blue dark SpinUp Pressed 1 f832e3e098a30c4b
+Blue dark SpinUp Disabled 1 891d0937ec867093
+Blue dark SpinUp Normal 2 3e66c6f94b8760d6
+Blue dark SpinUp Hot 2 4e67a0c3a1bb3a14
+Blue dark SpinUp Pressed 2 c2fcff20351bcc13
+Blue dark SpinUp Disabled 2 2e0772418c70f7b2
+Blue dark SpinDown Normal 1 802a0c9b6f4ee75b
+Blue dark SpinDown Hot 1 48eda3b8fb41db4e
+Blue dark SpinDown Pressed 1 3c510782defb84cf
+Blue dark SpinDown Disabled 1 c0e88e874a1c2620
+Blue dark SpinDown Normal 2 40cc604d3b804053
+Blue dark SpinDown Hot 2 93f93330f5995721
+Blue dark SpinDown Pressed 2 5cc9abde7707c01c
+Blue dark SpinDown Disabled 2 3c353658615be90a
+Olive dark SpinUp Normal 1 8acd4129673080e8
+Olive dark SpinUp Hot 1 10a9aef396887a0d
+Olive dark SpinUp Pressed 1 292664d9658b74c1
+Olive dark SpinUp Disabled 1 3e98361a20dd8827
+Olive dark SpinUp Normal 2 ecdaf4dff67ee9f4
+Olive dark SpinUp Hot 2 af5f14ef58630cd0
+Olive dark SpinUp Pressed 2 8231d2d756aa53a9
+Olive dark SpinUp Disabled 2 19dcafce9cf5f242
+Olive dark SpinDown Normal 1 6990959ba9d3acd2
+Olive dark SpinDown Hot 1 6778fecbdc636838
+Olive dark SpinDown Pressed 1 ecc6466fb81640c1
+Olive dark SpinDown Disabled 1 b5dd7861af8ceebd
+Olive dark SpinDown Normal 2 e0e6de391c39cc05
+Olive dark SpinDown Hot 2 f08f5b3e9614394b
+Olive dark SpinDown Pressed 2 dba287cbb70908ed
+Olive dark SpinDown Disabled 2 73c6aad419aed84d
+Silver dark SpinUp Normal 1 e13c478f3fe57568
+Silver dark SpinUp Hot 1 f4d70fc0eec426bc
+Silver dark SpinUp Pressed 1 c35376568acee057
+Silver dark SpinUp Disabled 1 f5e3f406b2785d31
+Silver dark SpinUp Normal 2 4ad9ca07bbc79579
+Silver dark SpinUp Hot 2 80b173165d5bbbf0
+Silver dark SpinUp Pressed 2 ffc9a57e79451bfe
+Silver dark SpinUp Disabled 2 dd4a5c0c243cc126
+Silver dark SpinDown Normal 1 58b2069db75039ee
+Silver dark SpinDown Hot 1 1b18dd3791c03f59
+Silver dark SpinDown Pressed 1 6ba8c11b3fd7658a
+Silver dark SpinDown Disabled 1 7f3eadc24e5cfdd4
+Silver dark SpinDown Normal 2 82aa06c92b01a136
+Silver dark SpinDown Hot 2 65e3b6414d67f991
+Silver dark SpinDown Pressed 2 ab147976c1a1a8bc
+Silver dark SpinDown Disabled 2 4c85b25d3c1ca3e0
+Slate dark SpinUp Normal 1 a2dcf229b90378cb
+Slate dark SpinUp Hot 1 35a8b09281bca051
+Slate dark SpinUp Pressed 1 9b149556a9e6822d
+Slate dark SpinUp Disabled 1 ec931a116e8ed958
+Slate dark SpinUp Normal 2 4fcbe03efcde2193
+Slate dark SpinUp Hot 2 88aa0b811ddbf637
+Slate dark SpinUp Pressed 2 c227d74b486bc856
+Slate dark SpinUp Disabled 2 2edaffd9b4df348a
+Slate dark SpinDown Normal 1 afdde17e6c827c17
+Slate dark SpinDown Hot 1 dec7fa0e6c08d764
+Slate dark SpinDown Pressed 1 cee0c4941cc22f53
+Slate dark SpinDown Disabled 1 02c2089c9a2398fc
+Slate dark SpinDown Normal 2 cc737830af7bbccb
+Slate dark SpinDown Hot 2 bdcd6ee3735650b7
+Slate dark SpinDown Pressed 2 cef5a04444cea876
+Slate dark SpinDown Disabled 2 d32e837b01175c2a
+Sapphire dark SpinUp Normal 1 afd2a9b69a0ee451
+Sapphire dark SpinUp Hot 1 7bb9fd484062b7db
+Sapphire dark SpinUp Pressed 1 3a30c202a2fd8a92
+Sapphire dark SpinUp Disabled 1 687d34f657638a03
+Sapphire dark SpinUp Normal 2 d45ff6ab211ec661
+Sapphire dark SpinUp Hot 2 9a43e1164e6158f6
+Sapphire dark SpinUp Pressed 2 0744259d97910b7f
+Sapphire dark SpinUp Disabled 2 7469e3c10761b352
+Sapphire dark SpinDown Normal 1 72b267597bed62b2
+Sapphire dark SpinDown Hot 1 aa1bded7914a6baa
+Sapphire dark SpinDown Pressed 1 5a96c15d4100412d
+Sapphire dark SpinDown Disabled 1 1273802dc6672057
+Sapphire dark SpinDown Normal 2 85bfa617359e00f5
+Sapphire dark SpinDown Hot 2 113cb49712580d02
+Sapphire dark SpinDown Pressed 2 7723c712d615fca3
+Sapphire dark SpinDown Disabled 2 e163144d6914275b
+Obsidian dark SpinUp Normal 1 008b08176b8bdf23
+Obsidian dark SpinUp Hot 1 bb5653c224ce19a5
+Obsidian dark SpinUp Pressed 1 cf17330b3e9dcc56
+Obsidian dark SpinUp Disabled 1 5fad1d4e08663ef6
+Obsidian dark SpinUp Normal 2 7b472fb836465f25
+Obsidian dark SpinUp Hot 2 eb586d0ab55ce332
+Obsidian dark SpinUp Pressed 2 3df157673c6a1aaf
+Obsidian dark SpinUp Disabled 2 373f9d04b4947203
+Obsidian dark SpinDown Normal 1 f63216d36f121132
+Obsidian dark SpinDown Hot 1 4b91e2a3d7afae2b
+Obsidian dark SpinDown Pressed 1 c2be19feb06ba601
+Obsidian dark SpinDown Disabled 1 bb998eefa90557ab
+Obsidian dark SpinDown Normal 2 2db7a16e0840e017
+Obsidian dark SpinDown Hot 2 2d9246c474b23126
+Obsidian dark SpinDown Pressed 2 e58d65969a5fff53
+Obsidian dark SpinDown Disabled 2 7e70de00c057f30b
+Ember dark SpinUp Normal 1 e910be68fb7c08fe
+Ember dark SpinUp Hot 1 a6521592585daaa8
+Ember dark SpinUp Pressed 1 85ee234e1aebb6e2
+Ember dark SpinUp Disabled 1 4e169db2f4f89c11
+Ember dark SpinUp Normal 2 5a6ac85be15a2074
+Ember dark SpinUp Hot 2 4bf25b41c1e515c6
+Ember dark SpinUp Pressed 2 a522af6422aa3f6c
+Ember dark SpinUp Disabled 2 71e853bcecb7d626
+Ember dark SpinDown Normal 1 66826da4fcef66c4
+Ember dark SpinDown Hot 1 87bc7a149c184c24
+Ember dark SpinDown Pressed 1 26026c8b52221f22
+Ember dark SpinDown Disabled 1 4e64d25eba3115f2
+Ember dark SpinDown Normal 2 456da51687b305e2
+Ember dark SpinDown Hot 2 1c4280d7f89e7cbc
+Ember dark SpinDown Pressed 2 6f1e0d35997e3817
+Ember dark SpinDown Disabled 2 536f35f2ef98a379
+Cobalt dark SpinUp Normal 1 a8dbd179d973ff77
+Cobalt dark SpinUp Hot 1 ebbd6cc5ecd6ce04
+Cobalt dark SpinUp Pressed 1 cf17330b3e9dcc56
+Cobalt dark SpinUp Disabled 1 7f48acd88691dd31
+Cobalt dark SpinUp Normal 2 105eaaa5825cfb16
+Cobalt dark SpinUp Hot 2 ddfa4fc8583472ae
+Cobalt dark SpinUp Pressed 2 3df157673c6a1aaf
+Cobalt dark SpinUp Disabled 2 58057d801e300f93
+Cobalt dark SpinDown Normal 1 370af055d942d37a
+Cobalt dark SpinDown Hot 1 e6fd101e9b989447
+Cobalt dark SpinDown Pressed 1 c2be19feb06ba601
+Cobalt dark SpinDown Disabled 1 eb456e43ddddcf8d
+Cobalt dark SpinDown Normal 2 44c2c76b9d9abcb3
+Cobalt dark SpinDown Hot 2 40641557465779d2
+Cobalt dark SpinDown Pressed 2 e58d65969a5fff53
+Cobalt dark SpinDown Disabled 2 254f57b5357fb456
+Carbon dark SpinUp Normal 1 f4f2c224b05320fe
+Carbon dark SpinUp Hot 1 a444e78601df715c
+Carbon dark SpinUp Pressed 1 e6fa6b2411246baf
+Carbon dark SpinUp Disabled 1 dbbea11d1d16dacb
+Carbon dark SpinUp Normal 2 29a2e8d987971a78
+Carbon dark SpinUp Hot 2 521bbb28f917f017
+Carbon dark SpinUp Pressed 2 10842e71d9a3f72a
+Carbon dark SpinUp Disabled 2 d25512007b384ed7
+Carbon dark SpinDown Normal 1 41fc46fed879e8fc
+Carbon dark SpinDown Hot 1 434d50e19e325f14
+Carbon dark SpinDown Pressed 1 0d236614e3a7d204
+Carbon dark SpinDown Disabled 1 8356fbd1d9c04c66
+Carbon dark SpinDown Normal 2 e64c25ac2f4bbdcf
+Carbon dark SpinDown Hot 2 af57cd08f5bdafec
+Carbon dark SpinDown Pressed 2 49cd256b9b2086b3
+Carbon dark SpinDown Disabled 2 b7b8e011f4f985c0
+Steel dark SpinUp Normal 1 2d46e0674fe0590e
+Steel dark SpinUp Hot 1 ece5e358a237b99f
+Steel dark SpinUp Pressed 1 d0ab58e5d5be8feb
+Steel dark SpinUp Disabled 1 88af3fee58714422
+Steel dark SpinUp Normal 2 0180b44193e85636
+Steel dark SpinUp Hot 2 4a2e3828e3a6bce2
+Steel dark SpinUp Pressed 2 c381de7d9c804423
+Steel dark SpinUp Disabled 2 0f597a062e8663c6
+Steel dark SpinDown Normal 1 bbff539bf6173d26
+Steel dark SpinDown Hot 1 04326d34618e9280
+Steel dark SpinDown Pressed 1 8d2f27b44a6f3212
+Steel dark SpinDown Disabled 1 4dc9ea48387e69a8
+Steel dark SpinDown Normal 2 2ca082a634fa17f4
+Steel dark SpinDown Hot 2 11f438286f8057d1
+Steel dark SpinDown Pressed 2 f57b9b158cbeece0
+Steel dark SpinDown Disabled 2 022c2492f944e78d

@@ -960,11 +960,7 @@ mod tests {
     fn the_program_menu_pins_in_every_look_at_scale_1_and_2() {
         use reprisekit::interface::Interface;
         reprisekit::pins::fonts();
-        fn fnv(c: &reprisekit::raster::Canvas) -> u64 {
-            c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                (h ^ *p as u64).wrapping_mul(0x100000001b3)
-            })
-        }
+        use reprisekit::pins::fnv;
         let mut got = Vec::new();
         for interface in [Interface::Classic, Interface::Blue, Interface::Glass] {
             let base = reprisekit::interfaces::theme_for(interface);

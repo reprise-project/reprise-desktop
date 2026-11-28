@@ -1,54 +1,54 @@
-pick Blue 0ms @1 64b5af17e1256bb9
-pick Blue 160ms @1 746b8dff035b7fe6
-pick Blue 320ms @1 5aeae6559e0f3dd7
-pick Blue 0ms @2 2019d2c68703e6a1
-pick Blue 160ms @2 e70d56c4a092f99d
-pick Blue 320ms @2 89e5d211e84bb8ea
-pick other Blue 0ms @1 64b5af17e1256bb9
-pick other Blue 160ms @1 9f412fbbad3b4cb2
-pick other Blue 320ms @1 7123107d7416c2f0
-pick other Blue 0ms @2 2019d2c68703e6a1
-pick other Blue 160ms @2 30ec6222eeb10342
-pick other Blue 320ms @2 5a5869328f6a4eea
-back Blue 0ms @1 5aeae6559e0f3dd7
-back Blue 195ms @1 4f5538b920093fe4
-back Blue 390ms @1 64b5af17e1256bb9
-back Blue 0ms @2 89e5d211e84bb8ea
-back Blue 195ms @2 b0b07b56694296a9
-back Blue 390ms @2 2019d2c68703e6a1
-enter tiles Blue 0ms @1 8d8b7348f9910de4
-enter tiles Blue 180ms @1 671afb3cc4102872
-enter tiles Blue 360ms @1 64b5af17e1256bb9
-enter tiles Blue 0ms @2 caad1ed5998c3621
-enter tiles Blue 180ms @2 2af287f05c1786de
-enter tiles Blue 360ms @2 2019d2c68703e6a1
-enter tile Blue 0ms @1 8d8b7348f9910de4
-enter tile Blue 180ms @1 d5c50ee4e0b5a367
-enter tile Blue 360ms @1 5aeae6559e0f3dd7
-enter tile Blue 0ms @2 caad1ed5998c3621
-enter tile Blue 180ms @2 665fe273255dc5b8
-enter tile Blue 360ms @2 89e5d211e84bb8ea
-busy Blue 0ms @1 222efe4d47abb7cc
-busy Blue 120ms @1 8d8b7348f9910de4
-busy Blue 240ms @1 18a4e68a1c30a6fb
-busy Blue 0ms @2 96cf3971abae19dc
-busy Blue 120ms @2 caad1ed5998c3621
-busy Blue 240ms @2 3b03b69debf2129f
-status Blue 0ms @1 18a4e68a1c30a6fb
-status Blue 80ms @1 fd81876223b8e620
-status Blue 160ms @1 5e2edf68c9e5e3ab
-status Blue 0ms @2 3b03b69debf2129f
-status Blue 80ms @2 e700468f2bc02b79
-status Blue 160ms @2 3a523d98b76a19ef
-fail Blue 0ms @1 18a4e68a1c30a6fb
-fail Blue 120ms @1 8d8b7348f9910de4
-fail Blue 240ms @1 9f3145e927f073cc
-fail Blue 0ms @2 3b03b69debf2129f
-fail Blue 120ms @2 caad1ed5998c3621
-fail Blue 240ms @2 54a89fbe5003e3e4
-admin Blue 0ms @1 5aeae6559e0f3dd7
-admin Blue 120ms @1 2d176f00760be317
-admin Blue 240ms @1 6a2d1b3f32583e99
-admin Blue 0ms @2 89e5d211e84bb8ea
-admin Blue 120ms @2 c28844f9d4eff160
-admin Blue 240ms @2 db8fb6107566304a
+pick Blue 0ms @1 0d489013a349bd55
+pick Blue 160ms @1 4ac4497fce93d3c2
+pick Blue 320ms @1 e37171c4cef727c3
+pick Blue 0ms @2 1c195cc74df7f9b6
+pick Blue 160ms @2 e4060736a247741a
+pick Blue 320ms @2 9469c49d39f7b029
+pick other Blue 0ms @1 0d489013a349bd55
+pick other Blue 160ms @1 79a2fa6628249146
+pick other Blue 320ms @1 123f042a7d481ba4
+pick other Blue 0ms @2 1c195cc74df7f9b6
+pick other Blue 160ms @2 e94f24e9ada73cd9
+pick other Blue 320ms @2 9ee6cf56cd9fd27d
+back Blue 0ms @1 e37171c4cef727c3
+back Blue 195ms @1 b652d96dc5208bd0
+back Blue 390ms @1 0d489013a349bd55
+back Blue 0ms @2 9469c49d39f7b029
+back Blue 195ms @2 344bdad9a382614a
+back Blue 390ms @2 1c195cc74df7f9b6
+enter tiles Blue 0ms @1 dffb7d3ab0048718
+enter tiles Blue 180ms @1 3bd77a5e8218ba26
+enter tiles Blue 360ms @1 0d489013a349bd55
+enter tiles Blue 0ms @2 44bd24399c050dfa
+enter tiles Blue 180ms @2 517b9da7152d0ac9
+enter tiles Blue 360ms @2 1c195cc74df7f9b6
+enter tile Blue 0ms @1 dffb7d3ab0048718
+enter tile Blue 180ms @1 e6581d3f35b8a6eb
+enter tile Blue 360ms @1 e37171c4cef727c3
+enter tile Blue 0ms @2 44bd24399c050dfa
+enter tile Blue 180ms @2 ef29d9774c92458b
+enter tile Blue 360ms @2 9469c49d39f7b029
+busy Blue 0ms @1 bd5307b98c465878
+busy Blue 120ms @1 dffb7d3ab0048718
+busy Blue 240ms @1 b1f8960981b99667
+busy Blue 0ms @2 0a3661cc3ce1b3d3
+busy Blue 120ms @2 44bd24399c050dfa
+busy Blue 240ms @2 0a2cbb1b7c3e9260
+status Blue 0ms @1 b1f8960981b99667
+status Blue 80ms @1 300775af222344e4
+status Blue 160ms @1 57b7bde74a7c480f
+status Blue 0ms @2 0a2cbb1b7c3e9260
+status Blue 80ms @2 cd745f4ab892eec6
+status Blue 160ms @2 acb603e3afa4ed50
+fail Blue 0ms @1 b1f8960981b99667
+fail Blue 120ms @1 dffb7d3ab0048718
+fail Blue 240ms @1 43c3f2a103cc67f0
+fail Blue 0ms @2 0a2cbb1b7c3e9260
+fail Blue 120ms @2 44bd24399c050dfa
+fail Blue 240ms @2 98d575836a0df6d3
+admin Blue 0ms @1 e37171c4cef727c3
+admin Blue 120ms @1 bd66951b7cdbbc93
+admin Blue 240ms @1 a470b79212fb57fd
+admin Blue 0ms @2 9469c49d39f7b029
+admin Blue 120ms @2 3ce91f3097c3b5e7
+admin Blue 240ms @2 955c3aa8672d3e19

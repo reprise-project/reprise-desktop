@@ -2578,11 +2578,7 @@ fn a_folder_with_a_picture_wears_it_in_thumbnails_view_only() {
     let frame = shellview::THUMB_FRAME;
     let (cx, cy) = (cover.x + cover.width / 2, cover.y + cover.height / 2);
     let (x0, y0) = (cx - frame / 2, cy - frame / 2);
-    let hash = (y0..y0 + frame)
-        .flat_map(|y| (x0..x0 + frame).map(move |x| (x, y)))
-        .fold(0xcbf2_9ce4_8422_2325u64, |h, (x, y)| {
-            (h ^ u64::from(c.get(x, y))).wrapping_mul(0x0100_0000_01b3)
-        });
+    let hash = reprisekit::pins::fnv_in(&c, Rect::new(x0, y0, frame, frame));
     let file = reprisekit::crate_dir!().join("tests/pins/folder_picture_cell.txt");
     reprisekit::pins::check_file(&file, &[("scale 1".into(), hash)]);
 }

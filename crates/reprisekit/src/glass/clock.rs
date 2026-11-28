@@ -462,15 +462,7 @@ mod tests {
         c.get(x.floor() as i32, y.floor() as i32)
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        [c.width, c.height]
-            .into_iter()
-            .chain(c.pixels.iter().copied())
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     /// At 9:30:15 the hour hand points between 9 and 10, the minute hand down and the second
     /// hand right; each leaves the face plain the other way.

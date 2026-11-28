@@ -661,22 +661,12 @@ fn drawn() -> Vec<(String, Canvas)> {
     out
 }
 
-fn hash(c: &Canvas) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for y in 0..c.height as i32 {
-        for x in 0..c.width as i32 {
-            for b in c.get(x, y).to_le_bytes() {
-                h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-            }
-        }
-    }
-    h
-}
+use reprisekit::pins::fnv;
 
 #[test]
 fn the_window_and_its_properties_sit_on_their_pixels_in_every_look() {
     reprisekit::pins::fonts();
-    let got: Vec<(String, u64)> = drawn().iter().map(|(k, c)| (k.clone(), hash(c))).collect();
+    let got: Vec<(String, u64)> = drawn().iter().map(|(k, c)| (k.clone(), fnv(c))).collect();
     let file = reprisekit::crate_dir!().join("tests/pins/window.txt");
     reprisekit::pins::check_file(&file, &got);
 }
@@ -726,7 +716,7 @@ fn the_buttons_wrap_inside_a_narrow_window() {
             win.app.list_rect(&ctx).y > status.y,
             "the list under it at {pct}%"
         );
-        got.push((format!("text {pct}, {w} px"), hash(&c)));
+        got.push((format!("text {pct}, {w} px"), fnv(&c)));
     }
     let file = reprisekit::crate_dir!().join("tests/pins/wrapped.txt");
     reprisekit::pins::check_file(&file, &got);

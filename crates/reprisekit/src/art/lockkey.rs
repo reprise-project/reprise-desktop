@@ -100,17 +100,7 @@ pub fn draw(key: LockKey, on: bool, d: i32) -> Canvas {
 mod tests {
     use super::*;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ u64::from(b)).wrapping_mul(0x100000001b3);
-                }
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn rgb(c: &Canvas, x: i32, y: i32) -> u32 {
         c.get(x, y) & 0xFF_FFFF

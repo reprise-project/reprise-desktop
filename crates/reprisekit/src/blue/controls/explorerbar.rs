@@ -146,20 +146,7 @@ mod tests {
     use crate::blue::Variant;
     use crate::shape::unpack;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h = 0xCBF2_9CE4_8422_2325_u64;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3);
-            }
-        };
-        eat(c.width);
-        eat(c.height);
-        for &p in &c.pixels {
-            eat(p);
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn part(v: Tone, d: i32, which: Part) -> PartImage {
         parts(v, d)

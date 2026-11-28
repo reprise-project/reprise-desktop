@@ -530,19 +530,7 @@ mod tests {
     fn the_recording_cell_pins_its_pixels() {
         let got: Vec<_> = [16, 24, 32]
             .into_iter()
-            .map(|px| {
-                let c = draw_recording(px);
-                let mut h = 0xcbf2_9ce4_8422_2325u64;
-                for v in [c.width, c.height]
-                    .into_iter()
-                    .chain(c.pixels.iter().copied())
-                {
-                    for b in v.to_le_bytes() {
-                        h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-                    }
-                }
-                (px.to_string(), h)
-            })
+            .map(|px| (px.to_string(), crate::pins::fnv(&draw_recording(px))))
             .collect();
         crate::pins::check("indicator_recording", &got);
     }

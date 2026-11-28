@@ -961,9 +961,7 @@ mod tests {
                     let mut c = Canvas::new(w as u32, h as u32);
                     c.fill_rect(c.bounds(), theme.colors.button_face);
                     form::draw(&mut c, &text, &theme.paint(), &f, true, theme.fonts.size_px);
-                    let hash = c.pixels.iter().fold(0xcbf29ce484222325, |h, p| {
-                        (h ^ u64::from(*p)).wrapping_mul(0x100000001b3)
-                    });
+                    let hash = reprisekit::pins::fnv(&c);
                     got.push((format!("{}-{pct}-{state}", i.as_str()), hash));
                 }
             }

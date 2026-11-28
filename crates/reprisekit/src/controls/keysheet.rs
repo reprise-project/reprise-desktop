@@ -409,18 +409,7 @@ mod tests {
         assert_eq!(lock.map(|(_, n)| n.role()), Some(Role::Label));
     }
 
-    /// FNV-1a over the pixels, for pins.
-    fn hash(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-                }
-            }
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn drawn(i: Interface, scale: i32) -> (Canvas, Layout, Theme) {
         drawn_in(theme_for(i), scale)
@@ -492,7 +481,7 @@ mod tests {
         let mut got = Vec::new();
         for i in [Interface::Classic, Interface::Blue, Interface::Glass] {
             for scale in [1, 2] {
-                got.push((format!("{i:?} {scale}"), hash(&drawn(i, scale).0)));
+                got.push((format!("{i:?} {scale}"), fnv(&drawn(i, scale).0)));
             }
         }
         let g = crate::glass::Settings {
@@ -502,7 +491,7 @@ mod tests {
         let dark = crate::interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
         for scale in [1, 2] {
             let c = drawn_in(dark.clone(), scale).0;
-            got.push((format!("Glass Dark {scale}"), hash(&c)));
+            got.push((format!("Glass Dark {scale}"), fnv(&c)));
         }
         crate::pins::check("keysheet", &got);
     }

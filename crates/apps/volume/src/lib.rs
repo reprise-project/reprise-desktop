@@ -1323,9 +1323,7 @@ mod tests {
                 }
                 let mut c = Canvas::new(ctx.size.0 as u32, ctx.size.1 as u32);
                 v.draw(repriseapp::MAIN, &mut c, &ctx);
-                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, &p| {
-                    (h ^ u64::from(p)).wrapping_mul(0x0100_0000_01b3)
-                });
+                let hash = reprisekit::pins::fnv(&c);
                 got.push((format!("{name}-{end}"), hash));
             }
         }

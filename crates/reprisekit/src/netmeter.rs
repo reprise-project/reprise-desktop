@@ -143,17 +143,7 @@ mod tests {
         (c, layout)
     }
 
-    fn hash(c: &Canvas, r: Rect) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for y in r.y..r.bottom() {
-            for x in r.x..r.right() {
-                for b in c.get(x, y).to_le_bytes() {
-                    h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
-                }
-            }
-        }
-        h
-    }
+    use crate::pins::fnv_in;
 
     #[test]
     fn the_meter_sits_between_the_tray_and_the_clock() {
@@ -244,9 +234,9 @@ mod tests {
             for scale in [1, 2] {
                 let (c, l) = bar(i, scale, ["\u{2193} 2.4 MB/s", "\u{2191} 120 KB/s"]);
                 let m = l.meter.unwrap();
-                got.push((format!("{i:?} {scale}"), hash(&c, m)));
+                got.push((format!("{i:?} {scale}"), fnv_in(&c, m)));
                 let (empty, _) = bar(i, scale, ["", ""]);
-                assert_ne!(hash(&c, m), hash(&empty, m), "{i:?}@{scale}: inked");
+                assert_ne!(fnv_in(&c, m), fnv_in(&empty, m), "{i:?}@{scale}: inked");
             }
         }
         crate::pins::check("netmeter", &got);

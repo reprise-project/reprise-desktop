@@ -65,7 +65,6 @@ fn restore_defaults_draws_in_every_look() {
         s.set_restore(0, true);
         let c = drawn(&s, &theme);
         let r = s.pages[0].item(RESTORE).unwrap().rect;
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut changed = false;
         for y in 0..s.size.1 {
             for x in 0..s.size.0 {
@@ -75,11 +74,10 @@ fn restore_defaults_draws_in_every_look() {
                     continue;
                 }
                 changed |= c.get(x, y) != plain.get(x, y);
-                h = (h ^ u64::from(c.get(x, y))).wrapping_mul(0x100_0000_01b3);
             }
         }
         assert!(changed, "{i:?}: the button is drawn");
-        hashes.push((format!("{i:?}"), h));
+        hashes.push((format!("{i:?}"), crate::pins::fnv_in(&c, r)));
     }
     crate::pins::check("controls/restore_defaults", &hashes);
 }

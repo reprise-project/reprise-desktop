@@ -128,20 +128,7 @@ mod tests {
     use crate::powerpanel::{Choice, First, ICON, Leave, layout};
     use crate::theme::{TextUnits, Theme};
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut x = 0xCBF2_9CE4_8422_2325_u64;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                x = (x ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3);
-            }
-        };
-        eat(c.width);
-        eat(c.height);
-        for &p in &c.pixels {
-            eat(p);
-        }
-        x
-    }
+    use crate::pins::fnv;
 
     fn drawn(v: Variant, p: &Panel, lit: Lit<Part>, cues: Cues, s: i32) -> Canvas {
         drawn_with(v, None, p, lit, cues, s)

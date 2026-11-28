@@ -530,13 +530,6 @@ mod tests {
     fn an_opaque_bar_draws_its_taskbar_opaque_and_keeps_its_pixels() {
         use crate::raster::{Canvas, Rect};
         use crate::style::{Part, State};
-        let fnv = |px: &[u32]| {
-            px.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &p| {
-                p.to_le_bytes().iter().fold(h, |h, &b| {
-                    (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-                })
-            })
-        };
         let mut got = Vec::new();
         for style in glass::Style::ALL {
             for small in [false, true] {
@@ -567,7 +560,10 @@ mod tests {
                         c.pixels.iter().all(|p| p >> 24 == 0xFF),
                         "{style:?} small={small} at {n}: opaque"
                     );
-                    got.push((format!("{style:?} small={small} at {n}"), fnv(&c.pixels)));
+                    got.push((
+                        format!("{style:?} small={small} at {n}"),
+                        crate::pins::fnv(&c),
+                    ));
                 }
             }
         }

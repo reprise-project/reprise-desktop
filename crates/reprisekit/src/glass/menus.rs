@@ -581,20 +581,7 @@ mod tests {
         );
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let words = [c.width, c.height]
-            .into_iter()
-            .chain((0..c.height as i32).flat_map(|y| {
-                (0..c.width as i32)
-                    .map(move |x| (x, y))
-                    .map(|(x, y)| c.get(x, y))
-            }));
-        words.fold(0xcbf2_9ce4_8422_2325, |h, w| {
-            w.to_le_bytes()
-                .iter()
-                .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
-        })
-    }
+    use crate::pins::fnv;
 
     #[test]
     fn the_bar_titles_and_marks_are_drawn_at_each_scale() {

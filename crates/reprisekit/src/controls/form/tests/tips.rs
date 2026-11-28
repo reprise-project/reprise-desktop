@@ -291,13 +291,7 @@ fn a_form_reports_its_label_tip_only_once_a_blink_shows_it() {
     assert_eq!(c.take_tip(), None, "taken once");
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    c.pixels.iter().fold(0xcbf2_9ce4_8422_2325, |h, w| {
-        w.to_le_bytes()
-            .iter()
-            .fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
-    })
-}
+use crate::pins::fnv;
 
 #[test]
 fn a_glass_tip_returns_the_rect_its_shadow_reaches() {

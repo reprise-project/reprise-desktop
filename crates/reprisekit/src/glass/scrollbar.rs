@@ -503,20 +503,7 @@ mod tests {
         c
     }
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut words = vec![c.width, c.height];
-        for y in 0..c.height as i32 {
-            for x in 0..c.width as i32 {
-                words.push(c.get(x, y));
-            }
-        }
-        words
-            .into_iter()
-            .flat_map(u32::to_le_bytes)
-            .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-                (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
-            })
-    }
+    use crate::pins::fnv;
 
     const ALL: [Part; 10] = [
         Part::ScrollArrowUp,

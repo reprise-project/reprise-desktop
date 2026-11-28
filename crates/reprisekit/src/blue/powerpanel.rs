@@ -521,20 +521,7 @@ mod tests {
     use crate::powerpanel::{First, Leave, layout};
     use crate::theme::TextUnits;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut x = 0xCBF2_9CE4_8422_2325_u64;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                x = (x ^ u64::from(b)).wrapping_mul(0x0100_0000_01B3);
-            }
-        };
-        eat(c.width);
-        eat(c.height);
-        for &p in &c.pixels {
-            eat(p);
-        }
-        x
-    }
+    use crate::pins::fnv;
 
     const MARKS: [(Hue, Mark); 7] = [
         (Hue::Green, Mark::Arrows),

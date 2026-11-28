@@ -1,22 +1,22 @@
-flag 1 b5b69e99b088f1f8
-flag cursor 1 769f07b6f5a23be3
-flag cursor last 1 d6c7706dcadf91f0
-skin tone 1 df6aaba03b76a4a0
-skin tone cursor 1 40703cc289c0d85d
-skin tone cursor last 1 3853d6d50a417120
-family 1 827efef81abab9d9
-family cursor 1 2472669f4d3c05a4
-family cursor last 1 1bc65f1afe9c1ed9
-keycap 1 33be3069d60ff2ac
-keycap cursor 1 f027cdf6e54e9949
-flag 2 cf34bac8c9de1e46
-flag cursor 2 8853fd88187acb7d
-flag cursor last 2 3a854142f9a3a08a
-skin tone 2 d7b58a1d416fea1c
-skin tone cursor 2 a573ed8c34620c7e
-skin tone cursor last 2 5642e1d7248bd89c
-family 2 fcd3697a6ed5d9d1
-family cursor 2 32be6179ecd6a683
-family cursor last 2 39d8a822f73075d1
-keycap 2 feffdeb71cce7f8f
-keycap cursor 2 950e56878bf78eb3
+flag 1 489f9868f9e1c21d
+flag cursor 1 1c5f2c3ea7283fd6
+flag cursor last 1 c6bfd52db35513f5
+skin tone 1 c7eec9b1fd79fbf9
+skin tone cursor 1 6144c720a8bf225c
+skin tone cursor last 1 21dd0dfa19173479
+family 1 36996916dd9745d8
+family cursor 1 21ffd7b0db113b9d
+family cursor last 1 069921b195d830d8
+keycap 1 a5d2f543ffbf9995
+keycap cursor 1 925e379e0e69ebc4
+flag 2 8671035d8e36f77b
+flag cursor 2 e75d0440cfec8190
+flag cursor last 2 c4b40c0e673fba67
+skin tone 2 f6bb653a4a56dfd9
+skin tone cursor 2 92c916f5af1f0767
+skin tone cursor last 2 e119f71635cd0359
+family 2 9cb6252d67613b1c
+family cursor 2 8db6d90156a0e862
+family cursor last 2 63744bdc6072159c
+keycap 2 de4734c7536a09d6
+keycap cursor 2 81d3835e9f0a2a26

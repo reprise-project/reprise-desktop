@@ -392,18 +392,7 @@ fn the_pad_fits_its_text_under_every_interface() {
     assert!(over.is_empty(), "{}", over.join("\n"));
 }
 
-fn fnv(c: &Canvas) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for v in [c.width, c.height]
-        .into_iter()
-        .chain(c.pixels.iter().copied())
-    {
-        for b in v.to_le_bytes() {
-            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    h
-}
+use crate::pins::fnv;
 
 fn looks() -> Vec<(String, Theme)> {
     let mut out = vec![

@@ -7,11 +7,7 @@ fn delete_badge_pins_at_scale_1_and_2() {
         let mut c = Canvas::new(32 * s as u32, 32 * s as u32);
         c.fill_rect(c.bounds(), Color::rgb(128, 128, 128));
         draw_delete_badge(&mut c, 0, 0, s);
-        let mut h = 0xcbf2_9ce4_8422_2325u64;
-        for b in c.pixels.iter().flat_map(|p| p.to_le_bytes()) {
-            h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3);
-        }
-        got.push((format!("@{s}"), h));
+        got.push((format!("@{s}"), reprisekit::pins::fnv(&c)));
     }
     let pins = reprisekit::crate_dir!().join("tests/pins/delete_badge.txt");
     reprisekit::pins::check_file(&pins, &got);
@@ -230,9 +226,7 @@ fn confirm_delete_is_pinned_in_every_interface_at_1_and_2() {
                     true,
                     None,
                 );
-                let hash = c.pixels.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, p| {
-                    (h ^ u64::from(*p)).wrapping_mul(0x100_0000_01b3)
-                });
+                let hash = reprisekit::pins::fnv(&c);
                 got.push((format!("{} {name} @{s}", i.as_str()), hash));
             }
         }

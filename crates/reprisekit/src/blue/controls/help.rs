@@ -130,21 +130,7 @@ mod tests {
     use super::*;
     use crate::blue::Variant;
 
-    fn fnv(c: &Canvas) -> u64 {
-        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut eat = |v: u32| {
-            for b in v.to_le_bytes() {
-                h ^= u64::from(b);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-        };
-        eat(c.width);
-        eat(c.height);
-        for &p in &c.pixels {
-            eat(p);
-        }
-        h
-    }
+    use crate::pins::fnv;
 
     fn alpha(p: u32) -> u32 {
         p >> 24
