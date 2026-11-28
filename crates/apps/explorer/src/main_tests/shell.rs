@@ -11,12 +11,17 @@ mod bare_caption;
 mod search_crumb;
 
 fn glass(dark: bool) -> Ctx {
+    glass_in(reprisekit::glass::Style::Glass, dark)
+}
+
+fn glass_in(style: reprisekit::glass::Style, dark: bool) -> Ctx {
     let mut ctx = test_ctx();
     let g = reprisekit::glass::Settings {
         mode: match dark {
             true => reprisekit::glass::Mode::Dark,
             false => reprisekit::glass::Mode::Light,
         },
+        style,
         ..Default::default()
     };
     ctx.theme = reprisekit::interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
@@ -467,6 +472,37 @@ fn the_nav_row_pins_light_and_dark_at_scale_1_and_2() {
         }
     }
     let path = reprisekit::crate_dir!().join("tests/pins/navrow.txt");
+    reprisekit::pins::check_file(&path, &got);
+}
+
+#[test]
+fn the_onyx_shell_pins_light_and_dark_at_scale_1_and_2() {
+    reprisekit::pins::fonts();
+    let mut got = Vec::new();
+    for dark in [false, true] {
+        let mut ctx = glass_in(reprisekit::glass::Style::Onyx, dark);
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let docs = dir.path().join("Documents");
+        std::fs::create_dir(&docs).expect("mkdir");
+        let ex = test_explorer(Place::Folder(docs), &mut ctx);
+        let look = if dark { "dark" } else { "light" };
+        let sl = shell(&ex, &ctx);
+        let details = sl.details.expect("the details pane shows");
+        let flourish = Rect::new(details.right() - 200, details.y, 200, details.height);
+        for s in [1, 2] {
+            let mut c = Canvas::with_scale(792, 573, s);
+            ctx.at_scale(s, |ctx| window::draw(&ex, &mut c, ctx));
+            for (part, r) in [
+                ("buttons", sl.back_fwd),
+                ("search", sl.search),
+                ("command bar", sl.command),
+                ("details end", flourish),
+            ] {
+                got.push((format!("{look} {part} @{s}"), fnv_in(&c, r)));
+            }
+        }
+    }
+    let path = reprisekit::crate_dir!().join("tests/pins/onyx_shell.txt");
     reprisekit::pins::check_file(&path, &got);
 }
 

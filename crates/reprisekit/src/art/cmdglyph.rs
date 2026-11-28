@@ -62,20 +62,32 @@ const ROW_LINE: Color = Color::rgb(0x6B, 0x7C, 0x90);
 
 /// `g` drawn `px` logical px square on a canvas at `scale`.
 pub fn canvas(g: CmdGlyph, px: i32, scale: i32) -> Canvas {
+    canvas_inked(g, px, scale, None)
+}
+
+/// [`canvas`], with `ink` its outlines and rules and its pages left open: a glyph on a dark band.
+pub fn canvas_inked(g: CmdGlyph, px: i32, scale: i32, ink: Option<Color>) -> Canvas {
     let s = scale.max(1);
     let dev = px.max(1) * s;
     let k = f64::from(dev) / UNIT;
-    shape::draw(dev, dev, 1, |x, y| paint(g, &Pen { x, y, k })).at_scale(s)
+    shape::draw(dev, dev, 1, |x, y| paint(g, &Pen { x, y, k, ink })).at_scale(s)
 }
 
-/// One device pixel (its top-left corner) and the device px per design unit.
+/// One device pixel (its top-left corner), the device px per design unit, and the ink that
+/// stands in for outlines and rules.
 struct Pen {
     x: f64,
     y: f64,
     k: f64,
+    ink: Option<Color>,
 }
 
 impl Pen {
+    /// `c`, an outline or rule's colour, in the pen's ink.
+    fn edge(&self, c: Color) -> Color {
+        self.ink.unwrap_or(c)
+    }
+
     fn rect(&self, (x, y, w, h): (f64, f64, f64, f64), r: f64) -> f64 {
         let k = self.k;
         rounded(self.x - x * k, self.y - y * k, w * k, h * k, r * k)
@@ -108,22 +120,20 @@ fn boxed(
     edge: Color,
     fill: Color,
 ) -> [(Color, f64); 2] {
-    [
-        (edge, p.rect((x, y, w, h), r)),
-        (
-            fill,
-            p.rect((x + 1.0, y + 1.0, w - 2.0, h - 2.0), (r - 1.0).max(0.0)),
-        ),
-    ]
+    let inside = p.rect((x + 1.0, y + 1.0, w - 2.0, h - 2.0), (r - 1.0).max(0.0));
+    match (p.ink, fill == PAGE) {
+        (Some(ink), true) => [(ink, p.rect((x, y, w, h), r) - inside), (fill, 0.0)],
+        _ => [(p.edge(edge), p.rect((x, y, w, h), r)), (fill, inside)],
+    }
 }
 
 fn paint(g: CmdGlyph, p: &Pen) -> Px {
     let mut l: Vec<(Color, f64)> = Vec::new();
     match g {
         CmdGlyph::Cut => {
-            l.push((STEEL, p.line(&[(4.5, 1.5), (10.5, 10.0)], 1.6)));
-            l.push((STEEL, p.line(&[(11.5, 1.5), (5.5, 10.0)], 1.6)));
-            l.push((PIVOT, p.disc((8.0, 7.2), 1.0)));
+            l.push((p.edge(STEEL), p.line(&[(4.5, 1.5), (10.5, 10.0)], 1.6)));
+            l.push((p.edge(STEEL), p.line(&[(11.5, 1.5), (5.5, 10.0)], 1.6)));
+            l.push((p.edge(PIVOT), p.disc((8.0, 7.2), 1.0)));
             for cx in [4.5, 11.5] {
                 let ring = p.disc((cx, 12.5), 2.8) - p.disc((cx, 12.5), 1.6);
                 l.push((GRIP, ring.max(0.0)));
@@ -134,18 +144,18 @@ fn paint(g: CmdGlyph, p: &Pen) -> Px {
             l.extend(boxed(p, (6.0, 4.5, 9.0, 11.0), 0.0, PAGE_EDGE, PAGE));
             for i in 0..3 {
                 l.push((
-                    PAGE_LINE,
+                    p.edge(PAGE_LINE),
                     p.rect((8.0, 7.5 + 2.0 * f64::from(i), 5.0, 1.0), 0.0),
                 ));
             }
         }
         CmdGlyph::Paste => {
             l.extend(boxed(p, (1.5, 2.5, 11.0, 13.0), 1.5, BOARD_EDGE, BOARD));
-            l.push((CLIP, p.rect((4.5, 1.0, 5.0, 3.0), 1.0)));
+            l.push((p.edge(CLIP), p.rect((4.5, 1.0, 5.0, 3.0), 1.0)));
             l.extend(boxed(p, (7.0, 6.0, 8.5, 9.5), 0.0, PAGE_EDGE, PAGE));
             for i in 0..3 {
                 l.push((
-                    PAGE_LINE,
+                    p.edge(PAGE_LINE),
                     p.rect((9.0, 8.5 + 2.0 * f64::from(i), 4.5, 1.0), 0.0),
                 ));
             }
@@ -166,15 +176,15 @@ fn paint(g: CmdGlyph, p: &Pen) -> Px {
             );
             if details {
                 l.push((PANE, p.rect((1.5, 10.5, 13.0, 3.0), 0.0)));
-                l.push((FRAME, p.rect((1.5, 10.0, 13.0, 1.0), 0.0)));
+                l.push((p.edge(FRAME), p.rect((1.5, 10.0, 13.0, 1.0), 0.0)));
             }
             if nav {
                 l.push((PANE, p.rect((1.5, 2.5, 4.0, 11.0), 0.0)));
-                l.push((FRAME, p.rect((5.5, 2.5, 1.0, 11.0), 0.0)));
+                l.push((p.edge(FRAME), p.rect((5.5, 2.5, 1.0, 11.0), 0.0)));
             }
             if g == CmdGlyph::PreviewPane {
                 l.push((PANE, p.rect((10.0, 2.5, 4.5, 11.0), 0.0)));
-                l.push((FRAME, p.rect((9.5, 2.5, 1.0, 11.0), 0.0)));
+                l.push((p.edge(FRAME), p.rect((9.5, 2.5, 1.0, 11.0), 0.0)));
             }
         }
         CmdGlyph::Thumbnails => {
@@ -191,23 +201,23 @@ fn paint(g: CmdGlyph, p: &Pen) -> Px {
         CmdGlyph::Tiles => {
             for y in [1.5, 8.5] {
                 l.extend(boxed(p, (1.0, y, 6.0, 6.0), 0.0, TILE_EDGE, TILE));
-                l.push((ROW_LINE, p.rect((8.5, y + 1.0, 6.5, 1.0), 0.0)));
-                l.push((ROW_LINE, p.rect((8.5, y + 3.5, 4.5, 1.0), 0.0)));
+                l.push((p.edge(ROW_LINE), p.rect((8.5, y + 1.0, 6.5, 1.0), 0.0)));
+                l.push((p.edge(ROW_LINE), p.rect((8.5, y + 3.5, 4.5, 1.0), 0.0)));
             }
         }
         CmdGlyph::List => {
             for i in 0..8 {
                 let (x, y) = (1.0 + 8.0 * f64::from(i / 4), 1.0 + 3.75 * f64::from(i % 4));
                 l.extend(boxed(p, (x, y, 3.0, 3.0), 0.0, TILE_EDGE, TILE));
-                l.push((ROW_LINE, p.rect((x + 4.0, y + 1.0, 2.5, 1.0), 0.0)));
+                l.push((p.edge(ROW_LINE), p.rect((x + 4.0, y + 1.0, 2.5, 1.0), 0.0)));
             }
         }
         CmdGlyph::Details => {
             for i in 0..4 {
                 let y = 1.0 + 3.75 * f64::from(i);
                 l.extend(boxed(p, (1.0, y, 3.0, 3.0), 0.0, TILE_EDGE, TILE));
-                l.push((ROW_LINE, p.rect((5.0, y + 1.0, 4.5, 1.0), 0.0)));
-                l.push((ROW_LINE, p.rect((10.5, y + 1.0, 4.5, 1.0), 0.0)));
+                l.push((p.edge(ROW_LINE), p.rect((5.0, y + 1.0, 4.5, 1.0), 0.0)));
+                l.push((p.edge(ROW_LINE), p.rect((10.5, y + 1.0, 4.5, 1.0), 0.0)));
             }
         }
     }
@@ -229,6 +239,41 @@ mod tests {
             }
         }
         crate::pins::check("art/cmdglyph", &got);
+    }
+
+    #[test]
+    fn inked_glyphs_pin_at_scale_1_and_2() {
+        let ink = Some(Color::rgb(0xE8, 0xF0, 0xF8));
+        let mut got = Vec::new();
+        for g in ALL {
+            for s in [1, 2] {
+                got.push((format!("{g:?} {s}"), fnv(&canvas_inked(g, 16, s, ink))));
+            }
+        }
+        crate::pins::check("art/cmdglyph_inked", &got);
+    }
+
+    #[test]
+    fn an_inked_glyph_takes_the_ink_for_its_outline_and_leaves_its_page_open() {
+        let ink = Color::rgb(0xE8, 0xF0, 0xF8);
+        let (plain, inked) = (
+            canvas(CmdGlyph::PreviewPane, 16, 1),
+            canvas_inked(CmdGlyph::PreviewPane, 16, 1, Some(ink)),
+        );
+        assert_eq!(plain.get(4, 7), 0xFFFF_FFFF, "a white page");
+        assert_eq!(inked.get(4, 7) >> 24, 0, "an open page");
+        let edge = inked.get(4, 1);
+        let a = edge >> 24;
+        assert!(a > 0, "the outline draws");
+        let unmul = |sh: u32| ((edge >> sh & 0xFF) * 255 + a / 2) / a;
+        for (sh, want) in [(16, 0xE8), (8, 0xF0), (0, 0xF8)] {
+            assert!(unmul(sh).abs_diff(want) <= 2, "in the ink: {edge:08X}");
+        }
+        assert_eq!(
+            canvas_inked(CmdGlyph::Cut, 16, 1, None).pixels,
+            canvas(CmdGlyph::Cut, 16, 1).pixels,
+            "no ink draws the glyph's own colours"
+        );
     }
 
     #[test]

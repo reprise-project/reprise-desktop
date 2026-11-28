@@ -750,6 +750,11 @@ fn render_glass_toolbar_on_glass(theme: &Theme) -> Canvas {
 /// each state, light Glass above dark, drawn at scale `n`: 520x(2 x 5 x 36), rows taller with
 /// the text.
 pub fn render_glass_navrow(n: i32) -> Canvas {
+    render_navrow(reprisekit::glass::Style::Glass, n)
+}
+
+/// [`render_glass_navrow`] in `style`.
+pub fn render_navrow(style: reprisekit::glass::Style, n: i32) -> Canvas {
     use reprisekit::controls::navbuttons::{self, Hit, NavButtons};
     use reprisekit::controls::searchfield::{self, SearchField};
     use reprisekit::textedit::EditKey;
@@ -816,6 +821,7 @@ pub fn render_glass_navrow(n: i32) -> Canvas {
     for (m, mode) in modes.into_iter().enumerate() {
         let g = reprisekit::glass::Settings {
             mode,
+            style,
             ..reprisekit::glass::Settings::default()
         };
         let theme =

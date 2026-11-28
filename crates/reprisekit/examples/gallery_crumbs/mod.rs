@@ -97,7 +97,11 @@ fn states() -> Vec<(&'static str, Breadcrumb, i32)> {
     ]
 }
 
-fn looks() -> Vec<(String, Theme)> {
+fn looks(style: reprisekit::glass::Style) -> Vec<(String, Theme)> {
+    let name = match style {
+        reprisekit::glass::Style::Glass => "Glass",
+        reprisekit::glass::Style::Onyx => "Onyx",
+    };
     [
         reprisekit::glass::Mode::Light,
         reprisekit::glass::Mode::Dark,
@@ -106,16 +110,22 @@ fn looks() -> Vec<(String, Theme)> {
     .map(|mode| {
         let g = reprisekit::glass::Settings {
             mode,
+            style,
             ..Default::default()
         };
         let t = interfaces::theme_with(Interface::Glass, Default::default(), false, &g);
-        (format!("Glass {mode:?}"), t)
+        (format!("{name} {mode:?}"), t)
     })
     .collect()
 }
 
 pub fn render(s: i32) -> Canvas {
-    let looks = looks();
+    render_in(reprisekit::glass::Style::Glass, s)
+}
+
+/// The address's states in `style`, light and dark side by side.
+pub fn render_in(style: reprisekit::glass::Style, s: i32) -> Canvas {
+    let looks = looks(style);
     let states = states();
     let col_w = LABEL_W + FIELD_W + 20;
     let (w, h) = (looks.len() as i32 * col_w, 20 + states.len() as i32 * ROW_H);

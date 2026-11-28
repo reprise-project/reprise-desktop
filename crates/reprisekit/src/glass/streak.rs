@@ -126,6 +126,11 @@ pub fn onyx_at(u: f64) -> u32 {
 
 pub const ONYX_LIGHT_SHARE: f64 = 0.5;
 
+/// [`ONYX_LIGHT`]'s level at `u` along its diagonal, 0 to [`ONYX_PEAK`].
+pub fn onyx_level(u: f64) -> f64 {
+    along(ONYX_LIGHT, u)
+}
+
 fn onyx_layer(level: f64) -> u32 {
     let a = (ONYX_PEAK - level).round().clamp(0.0, 255.0) as u32;
     let c = (ONYX_LIGHT_SHARE * level).round().clamp(0.0, 255.0) as u32;

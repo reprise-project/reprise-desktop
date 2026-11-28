@@ -224,8 +224,9 @@ pub fn buttons((w, h): (i32, i32), d: i32) -> PartImage {
         .at_scale(d)
 }
 
-/// `st` with Onyx's bar, notification area and task buttons for a bar `small_bar` or not, drawn
-/// at `d`. Labelled buttons draw the task button frame; nothing glows in an icon's colour.
+/// `st` with Onyx's bar, notification area and task buttons for a bar `small_bar` or not, and its
+/// shell window parts ([`super::onyxshell`]), drawn at `d`. Labelled buttons draw the task
+/// button frame; nothing glows in an icon's colour.
 pub(super) fn restyle(
     st: crate::style::Style,
     s: &Settings,
@@ -248,7 +249,7 @@ pub(super) fn restyle(
         .with_task_spot(None);
     st.taskbar.labelled = LABELLED;
     st.metrics.task_button_max_width = LABELLED_WIDTH;
-    st
+    super::onyxshell::restyle(st, &s, d)
 }
 
 #[cfg(test)]
