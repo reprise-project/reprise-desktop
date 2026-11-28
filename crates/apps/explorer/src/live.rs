@@ -106,8 +106,15 @@ impl Explorer {
     /// their icons at that scale (List and Details' at the text's size), icon files once a thread
     /// decodes them, and thumbnails made at another one are asked for again. A new icon theme
     /// fetches the chrome again and re-lists. A new text size rebuilds the task pane and fetches
-    /// the toolbar's and the Folders tree's icons at their size.
+    /// the toolbar's and the Folders tree's icons at their size. A switch to or from a look whose
+    /// frame runs under the client builds the Folders tree or the navigation pane in its place.
     pub fn follow_scale(&mut self, scale: i32, ctx: &mut Ctx) {
+        let nav = reprisekit::look::client_glass(&ctx.theme, true).is_some();
+        if (self.tree.style == treeview::Style::Nav) != nav {
+            self.build_tree(ctx);
+            let place = self.place.clone();
+            self.tree_follow(&place, ctx);
+        }
         let sizes = shellview::listing_px(ctx.theme.text);
         self.list_icons.follow(
             scale,

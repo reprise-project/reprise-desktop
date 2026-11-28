@@ -24,6 +24,8 @@ pub struct Places {
     /// The nodes' icon size, logical px ([`treeview::icon_px`]); a host that changes it calls
     /// [`refetch_icons`].
     pub px: i32,
+    /// The navigation pane's Favorites heading waits on its icon.
+    heading: bool,
 }
 
 impl Default for Places {
@@ -45,6 +47,7 @@ impl From<Vec<Place>> for Places {
             at,
             waiting: HashMap::new(),
             px: treeview::ICON_PX,
+            heading: false,
         }
     }
 }
@@ -229,18 +232,36 @@ fn wear(places: &mut Places, place: &Place, own: &Own, icons: &mut IconCache) ->
 pub fn refetch_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
     places.waiting.clear();
     walk_icons(&mut tree.roots, places, icons, &mut |_| Some(Own::None));
+    land_heading(tree, places, icons, true);
+}
+
+/// The Favorites heading takes its icon once it decoded, or afresh with `again`: true when it
+/// changed.
+fn land_heading(
+    tree: &mut TreeView,
+    places: &mut Places,
+    icons: &mut IconCache,
+    again: bool,
+) -> bool {
+    match tree.roots.first_mut() {
+        Some(n) if (again || places.heading) && places.get(n.id as usize).is_none() => {
+            heading_icon(n, places, icons)
+        }
+        _ => false,
+    }
 }
 
 /// Nodes wearing a stand-in take their icons once the names they wait on landed in `icons`
 /// ([`IconCache::put_icons`]): true when one changed. Cheap while none did.
 pub fn land_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) -> bool {
+    let heading = land_heading(tree, places, icons, false);
     let on: HashSet<&String> = places.waiting.values().map(|(_, on)| on).collect();
     let ready: HashSet<String> = (on.into_iter())
         .filter(|n| icons.get_unread(n, places.px).is_some())
         .cloned()
         .collect();
     if ready.is_empty() {
-        return false;
+        return heading;
     }
     let mut landed = HashMap::new();
     places.waiting.retain(|place, (names, on)| {
@@ -250,9 +271,10 @@ pub fn land_icons(tree: &mut TreeView, places: &mut Places, icons: &mut IconCach
         }
         !done
     });
-    walk_icons(&mut tree.roots, places, icons, &mut |p| {
-        landed.get(p).cloned()
-    })
+    heading
+        | walk_icons(&mut tree.roots, places, icons, &mut |p| {
+            landed.get(p).cloned()
+        })
 }
 
 /// Gives each node whose place `own` answers for the icons it wears with that: true when one
@@ -296,6 +318,56 @@ pub fn build(tree: &mut TreeView, places: &mut Places, icons: &mut IconCache) {
     root.expanded = true;
     tree.roots = vec![root];
     tree.selected = Some(vec![0]);
+}
+
+/// Places with the labels they show under.
+pub type Named = Vec<(String, Place)>;
+
+/// The theme icon the navigation pane's Favorites heading wears.
+const FAVORITES_ICON: &str = "user-bookmarks";
+
+/// Build the navigation pane ([`treeview::Style::Nav`]): a Favorites heading, open, holding
+/// `favorites` (none of them opens), then a root per place of `groups` (Computer and the
+/// like), each closed and read when opened. The heading stands for no place: a click on it
+/// picks it and goes nowhere.
+pub fn build_nav(
+    tree: &mut TreeView,
+    places: &mut Places,
+    icons: &mut IconCache,
+    favorites: Named,
+    groups: Named,
+) {
+    *places = Places {
+        px: places.px,
+        ..Places::default()
+    };
+    let kids = (favorites.into_iter())
+        .map(|(label, p)| tree_node(places, &label, p, false, &Own::None, icons))
+        .collect();
+    let mut heading = Node {
+        label: tr!("folder-tree-favorites"),
+        has_children: true,
+        expanded: true,
+        children: kids,
+        id: u64::MAX,
+        ..Node::default()
+    };
+    heading_icon(&mut heading, places, icons);
+    let mut roots = vec![heading];
+    for (label, p) in groups {
+        let opens = matches!(p, Place::Computer | Place::Home | Place::Folder(_));
+        roots.push(tree_node(places, &label, p, opens, &Own::None, icons));
+    }
+    *tree = TreeView::new(roots, treeview::Style::Nav);
+}
+
+/// The Favorites heading's icon, or none while it decodes ([`Places::heading`] waits on it).
+fn heading_icon(n: &mut Node, places: &mut Places, icons: &mut IconCache) -> bool {
+    let icon = unread(icons, FAVORITES_ICON, places.px).ok().flatten();
+    places.heading = icon.is_none();
+    let changed = n.icon != icon;
+    (n.icon, n.open_icon) = (icon.clone(), icon);
+    changed
 }
 
 /// Read a tree node's children. The Desktop holds the rows its view lists for the shell places
@@ -477,11 +549,11 @@ pub fn fill_with(
 fn compact(tree: &mut TreeView, places: &mut Places) {
     fn walk(nodes: &mut [Node], old: &[Place], out: &mut Vec<Place>) {
         for n in nodes {
-            let Some(place) = old.get(n.id as usize) else {
-                continue;
-            };
-            out.push(place.clone());
-            n.id = (out.len() - 1) as u64;
+            // A group heading stands for no place and keeps its id.
+            if let Some(place) = old.get(n.id as usize) {
+                out.push(place.clone());
+                n.id = (out.len() - 1) as u64;
+            }
             walk(&mut n.children, old, out);
         }
     }
@@ -508,8 +580,10 @@ pub fn filled(tree: &TreeView, places: &[Place]) -> Vec<Place> {
     out
 }
 
+/// The place of the node at `path`; `None` for a group heading ([`build_nav`]'s Favorites).
 pub fn place_of(tree: &TreeView, places: &[Place], path: &[usize]) -> Option<Place> {
-    tree.node(path).map(|n| places[n.id as usize].clone())
+    tree.node(path)
+        .and_then(|n| places.get(n.id as usize).cloned())
 }
 
 /// A place's subfolders for the tree, through the same [`place::list`] the view reads, so the tree
@@ -558,12 +632,36 @@ pub fn path_of(
     mounts: &[PathBuf],
 ) -> Option<Vec<usize>> {
     let chain = place.chain_in(mounts);
-    let mut path: Vec<usize> = Vec::new();
-    for want in &chain {
+    let (mut path, k) = start(tree, places, &chain)?;
+    for want in &chain[k + 1..] {
         let i = child_index(tree, places, &path, want)?;
         path.push(i);
     }
-    (!path.is_empty()).then_some(path)
+    Some(path)
+}
+
+/// Where a walk down `chain` starts: the node standing for the last place of `chain` that a root
+/// stands for, or a child of a group heading ([`build_nav`]'s Favorites), and that can hold the
+/// rest of the chain. Its path, and that place's index in `chain`.
+fn start(tree: &TreeView, places: &[Place], chain: &[Place]) -> Option<(Vec<usize>, usize)> {
+    let at = |n: &Node| places.get(n.id as usize);
+    let mut starts: Vec<(Vec<usize>, &Place)> = Vec::new();
+    for (i, root) in tree.roots.iter().enumerate() {
+        match at(root) {
+            Some(p) => starts.push((vec![i], p)),
+            None => starts.extend(
+                (root.children.iter().enumerate()).filter_map(|(j, n)| Some((vec![i, j], at(n)?))),
+            ),
+        }
+    }
+    let holds = |path: &[usize], k: usize| {
+        k + 1 == chain.len() || tree.node(path).is_some_and(|n| n.has_children)
+    };
+    chain.iter().enumerate().rev().find_map(|(k, want)| {
+        (starts.iter())
+            .find(|(path, p)| *p == want && holds(path, k))
+            .map(|(path, _)| (path.clone(), k))
+    })
 }
 
 /// The index under `path` (among the roots for an empty one) of the node standing for `want`; `None` if no node does.
@@ -573,7 +671,9 @@ fn child_index(tree: &TreeView, places: &[Place], path: &[usize], want: &Place) 
     } else {
         &tree.node(path)?.children
     };
-    level.iter().position(|n| &places[n.id as usize] == want)
+    level
+        .iter()
+        .position(|n| places.get(n.id as usize) == Some(want))
 }
 
 /// The path of the node standing for `place` when its children are worth reading again: a folder
@@ -594,12 +694,16 @@ pub fn refill_path(
 /// read, every place left on the chain.
 pub fn to_fill(tree: &TreeView, places: &[Place], place: &Place, mounts: &[PathBuf]) -> Vec<Place> {
     let chain = place.chain_in(mounts);
-    let mut path: Vec<usize> = Vec::new();
-    for (k, want) in chain.iter().enumerate() {
-        let Some(i) = child_index(tree, places, &path, want) else {
-            break;
-        };
-        path.push(i);
+    let Some((mut path, first)) = start(tree, places, &chain) else {
+        return Vec::new();
+    };
+    for (k, want) in chain.iter().enumerate().skip(first) {
+        if k > first {
+            let Some(i) = child_index(tree, places, &path, want) else {
+                break;
+            };
+            path.push(i);
+        }
         if tree
             .node(&path)
             .is_some_and(|n| n.has_children && n.children.is_empty())
@@ -625,12 +729,16 @@ pub fn follow_with(
 ) -> Vec<(Place, bool)> {
     let mut filled = Vec::new();
     let chain = place.chain_in(inp.drive_mounts);
-    let mut path: Vec<usize> = Vec::new();
-    for want in &chain {
-        let Some(i) = child_index(tree, places, &path, want) else {
-            break;
-        };
-        path.push(i);
+    let Some((mut path, first)) = start(tree, places, &chain) else {
+        return filled;
+    };
+    for (k, want) in chain.iter().enumerate().skip(first) {
+        if k > first {
+            let Some(i) = child_index(tree, places, &path, want) else {
+                break;
+            };
+            path.push(i);
+        }
         let fill_it = match tree.node_mut(&path) {
             Some(n) if n.has_children => {
                 n.expanded = true;

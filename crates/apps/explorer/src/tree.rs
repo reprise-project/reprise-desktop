@@ -7,10 +7,50 @@ use reprisekit::controls::treeview::{self, TreeView};
 use std::path::PathBuf;
 
 impl Explorer {
+    /// The Folders tree, or under a look whose frame runs down under the client the navigation
+    /// pane ([`foldertree::build_nav`]).
     pub fn build_tree(&mut self, ctx: &mut Ctx) {
+        // A read for the tree this one replaces would fill whichever node now stands for its place.
+        self.filling.clear();
         self.tree_places.px = treeview::icon_px(ctx.theme.text);
+        if reprisekit::look::client_glass(&ctx.theme, true).is_some() {
+            let (favorites, groups) = self.nav_places();
+            let (tree, places) = (&mut self.tree, &mut self.tree_places);
+            foldertree::build_nav(tree, places, &mut ctx.icons, favorites, groups);
+            return;
+        }
+        self.tree = TreeView::new(Vec::new(), treeview::Style::Explorer);
         foldertree::build(&mut self.tree, &mut self.tree_places, &mut ctx.icons);
         self.fill_node(vec![0], ctx);
+    }
+
+    /// The navigation pane's Favorites (the Desktop, the Downloads folder, then each bookmarked
+    /// folder not already there) and its groups (Home, Computer, Network, the Recycle Bin), named.
+    /// A bookmark's folder is listed whether or not it is there: nothing here stats a mount.
+    fn nav_places(&self) -> (foldertree::Named, foldertree::Named) {
+        let named = |p: Place| (self.title_of(&p), p);
+        let downloads =
+            reprisefs::places::user_dir("DOWNLOAD", "Downloads").map(|d| Place::from_path(&d));
+        let mut favorites: foldertree::Named = [Some(Place::Desktop), downloads]
+            .into_iter()
+            .flatten()
+            .map(named)
+            .collect();
+        for f in self.favorites().iter() {
+            if let reprisefs::pins::Target::Folder(dir) = &f.target {
+                let p = Place::from_path(dir);
+                if !favorites.iter().any(|(_, q)| *q == p) {
+                    favorites.push((f.label.clone(), p));
+                }
+            }
+        }
+        let groups = [
+            Place::Home,
+            Place::Computer,
+            Place::network(),
+            Place::RecycleBin,
+        ];
+        (favorites, groups.into_iter().map(named).collect())
     }
 
     /// Reads a Folders node's children on a thread. One that takes longer than [`LIST_WAIT`] (a
