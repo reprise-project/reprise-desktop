@@ -2434,6 +2434,57 @@ fn a_menu_in_columns_draws_its_columns_whole() {
     crate::pins::check("controls/menu_columns_200", &hashes);
 }
 
+#[test]
+fn a_greyed_check_or_bullet_is_etched_in_classic() {
+    crate::pins::fonts();
+    let items = vec![
+        MenuItem::entry("Word Wrap").checked(true).enabled(false),
+        MenuItem::entry("Status Bar")
+            .radio(true)
+            .checked(true)
+            .enabled(false),
+    ];
+    let base = crate::interfaces::theme_for(Interface::Classic);
+    let text = TextRenderer::load(&base.fonts);
+    let style =
+        MenuStyle::context_for(&base, &items).fit(&text, &items, base.fonts.size_px, i32::MAX);
+    let mut hashes = Vec::new();
+    for s in [1, 2] {
+        let l = MenuLayout::compute_styled(&style, &items, usize::MAX).scaled(s);
+        let theme = base.scaled(s);
+        let mut c = Canvas::new(l.width as u32, l.height as u32);
+        draw_menu(
+            &mut c,
+            &theme,
+            text.for_output(s),
+            &l,
+            &items,
+            None,
+            "",
+            false,
+        );
+        let (gray, white) = (
+            theme.colors.gray_text.argb(),
+            theme.colors.button_hilight.argb(),
+        );
+        for (i, r) in l.rows.iter().enumerate() {
+            let gutter = Rect::new(r.x, r.y, l.text_x, r.height);
+            let at = |x, y| c.get(gutter.x + x, gutter.y + y);
+            let marked: Vec<(i32, i32)> = (0..gutter.height)
+                .flat_map(|y| (0..gutter.width).map(move |x| (x, y)))
+                .filter(|&(x, y)| at(x, y) == gray)
+                .collect();
+            assert!(!marked.is_empty(), "row {i} at {s}: the mark is gray_text");
+            assert!(
+                marked.iter().any(|&(x, y)| at(x + s, y + s) == white),
+                "row {i} at {s}: a hilight copy sits one pixel down-right"
+            );
+        }
+        hashes.push((format!("Classic@{s}"), crate::pins::fnv(&c)));
+    }
+    crate::pins::check("controls/menu_greyed_marks", &hashes);
+}
+
 /// A context menu with a check mark, a radio dot and a submenu arrow at 200% text, in each look at
 /// scale 1 and 2: the marks and the arrow draw at twice their 100% size, and Classic's 7x7 check
 /// mark inks a 14x14 box clear of the label.

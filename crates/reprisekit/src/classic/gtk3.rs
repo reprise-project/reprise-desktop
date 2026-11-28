@@ -6,8 +6,8 @@
 //! ([`crate::theme::TextUnits::small`]).
 
 use crate::classic::widgets::{
-    Arrow, CheckState, draw_arrow_h, draw_arrow_v, draw_checkbox_disabled, draw_checkbox_held,
-    draw_list_check, draw_radio, draw_radio_disabled,
+    Arrow, CheckState, draw_arrow_h, draw_arrow_v, draw_check, draw_checkbox_disabled,
+    draw_checkbox_held, draw_list_check, draw_radio, draw_radio_disabled,
 };
 use crate::paint::{Backdrop, Look, Paint};
 use crate::raster::{Canvas, EdgeStyle, Rect};
@@ -86,7 +86,7 @@ fn fills(cs: &ColorScheme, dir: &str, k: i32) -> Vec<(&'static str, String)> {
 
 pub const ASSETS: &str = "assets";
 
-const ART: [&str; 22] = [
+const ART: [&str; 25] = [
     "check_off",
     "check_on",
     "check_mixed",
@@ -100,6 +100,9 @@ const ART: [&str; 22] = [
     "radio_on_greyed",
     "list_check_off",
     "list_check_on",
+    "menu_check",
+    "menu_check_lit",
+    "menu_check_greyed",
     "arrow_up",
     "arrow_down",
     "arrow_left",
@@ -217,6 +220,12 @@ fn art(cs: &ColorScheme, s: i32, k: i32) -> Vec<Canvas> {
         })
     };
     let list_check = |on| draw(check_px, check_px, &|c, r| draw_list_check(c, &p, r, on));
+    let menu_check = |ink| draw(check_px, check_px, &|c, r| draw_check(c, r, s * k, ink));
+    let greyed_menu_check = draw(check_px, check_px, &|c, r| {
+        let down_right = Rect::new(r.x + s, r.y + s, r.width, r.height);
+        draw_check(c, down_right, s * k, cs.button_hilight);
+        draw_check(c, r, s * k, cs.button_shadow);
+    });
     vec![
         check(CheckState::Off, false),
         check(CheckState::On, false),
@@ -231,6 +240,9 @@ fn art(cs: &ColorScheme, s: i32, k: i32) -> Vec<Canvas> {
         greyed_radio(true),
         list_check(false),
         list_check(true),
+        menu_check(cs.menu_text),
+        menu_check(cs.hilight_text),
+        greyed_menu_check,
         arrow(Arrow::Up, false),
         arrow(Arrow::Down, false),
         arrow(Arrow::Left, false),
@@ -589,6 +601,44 @@ mod tests {
         assert_eq!(px(&greyed, 4, 9), [0x80, 0x80, 0x80, 255]);
         assert_eq!(px(&greyed, 4, 10)[3], 0);
         assert_eq!(px(&greyed, 11, 10), [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn a_greyed_menu_check_is_etched() {
+        let cs = ColorScheme::default();
+        let css = sheet(&cs);
+        let greyed = "menu menuitem check:checked:disabled, .menu menuitem check:checked:disabled,";
+        assert!(rule(&css, greyed).contains("menu_check_greyed.png"));
+        assert!(rule(&css, "menu menuitem:hover check:checked,").contains("menu_check_lit.png"));
+        let files = assets(&cs, 1);
+        let px = |name: &str, x: u32, y: u32| {
+            let bytes = &files.iter().find(|(n, _)| n == name).unwrap().1;
+            let mut r = png::Decoder::new(std::io::Cursor::new(bytes))
+                .read_info()
+                .unwrap();
+            let mut buf = vec![0; r.output_buffer_size().unwrap()];
+            let info = r.next_frame(&mut buf).unwrap();
+            let i = ((y * info.width + x) * 4) as usize;
+            [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+        };
+        assert_eq!(
+            px("menu_check.png", 9, 3),
+            [0, 0, 0, 255],
+            "the mark's last stroke"
+        );
+        assert_eq!(px("menu_check.png", 10, 6)[3], 0, "clear beside it");
+        assert_eq!(px("menu_check_lit.png", 9, 3), [255, 255, 255, 255]);
+        let greyed = "menu_check_greyed.png";
+        assert_eq!(
+            px(greyed, 9, 3),
+            [0x80, 0x80, 0x80, 255],
+            "the mark in shadow"
+        );
+        assert_eq!(
+            px(greyed, 10, 6),
+            [255, 255, 255, 255],
+            "its hilight a pixel down-right"
+        );
     }
 
     /// At 200% text the check boxes and radio buttons are their 100% pictures doubled pixel for
