@@ -78,6 +78,19 @@ pub enum Part {
     CommandButton,
     /// A command bar's round help mark.
     CommandHelp,
+    /// The nav row's pill behind Back and Forward, over the frame's glass.
+    NavPill,
+    /// Back's and Forward's round buttons: Normal, Hot, Pressed and Disabled.
+    NavBack,
+    NavForward,
+    /// The recent places drop after the pill: Normal, Hot, Pressed and Disabled.
+    NavRecent,
+    /// The nav row's search field over the frame's glass: Normal, Hot and Focused.
+    SearchField,
+    /// The magnifier at the search field's right end.
+    SearchGlass,
+    /// The search field's clear button: Normal, Hot and Pressed.
+    SearchClear,
     ProgressBar,
     ProgressChunk,
     TrackbarTrack,

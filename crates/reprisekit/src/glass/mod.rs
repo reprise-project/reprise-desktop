@@ -21,6 +21,7 @@ mod header;
 mod items;
 pub mod logon;
 mod menus;
+mod navrow;
 pub mod notify;
 mod onyx;
 mod onyxorb;
@@ -614,8 +615,14 @@ fn build_at(s: &Settings, scale: i32) -> crate::style::Style {
         .into_iter()
         .chain(items::painters())
         .chain(crumbs::painters())
+        .chain(navrow::painters())
         .fold(style, |st, (part, paint)| {
             st.with_painted(part, move || ink((part, paint(scale))).1)
+        });
+    let style = navrow::glass_painters()
+        .into_iter()
+        .fold(style, |st, (part, paint)| {
+            st.with_painted(part, move || paint(scale))
         });
     let style = if is_dark {
         style

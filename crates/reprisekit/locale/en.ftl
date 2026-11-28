@@ -410,6 +410,12 @@ trayflyout-link = Customize...
 
 ## searchfield
 searchfield-cue = Search
+searchfield-cue-in = Search { $name }
+searchfield-clear = Clear
+
+## navbuttons
+navbuttons-bar = Navigation
+navbuttons-recent = Recent Pages
 
 ## cliphistory
 cliphistory-empty = Nothing has been copied yet.

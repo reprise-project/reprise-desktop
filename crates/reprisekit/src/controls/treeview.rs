@@ -93,7 +93,7 @@ const NAV_EXPANDER_BACK: i32 = 9;
 const EXPANDER_CELL: (i32, i32) = (7, 16);
 /// How long `Style::Nav`'s expanders take to fade in and out, and the redraw pitch while they fade.
 pub const EXPANDER_FADE_IN_MS: u32 = 200;
-pub const EXPANDER_FADE_OUT_MS: u32 = 800;
+pub const EXPANDER_FADE_OUT_MS: u32 = 1100;
 const FADE_FRAME: Duration = Duration::from_millis(16);
 /// How far the selection band runs left of a label and right of its text.
 const BAND_BEFORE: i32 = 2;

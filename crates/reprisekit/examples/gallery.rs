@@ -107,7 +107,7 @@ use dialogs::{
     render_label_ellipsis, render_location_prompt, render_monitors, render_print_dialogs,
     render_print_preview, render_stats_panel, render_windowed_dialog,
 };
-use glass::{render_glass, render_glass_dark, render_glass_scale2};
+use glass::{render_glass, render_glass_dark, render_glass_navrow, render_glass_scale2};
 use glass_shell::{
     render_glass_preview, render_glass_switcher, render_onyx_preview, render_onyx_streaks,
 };
@@ -200,6 +200,10 @@ fn write_scale(n: i32) {
         &format!("reprisekit-gallery-onyx-streaks@{}.png", n.max(1)),
     );
     write_volume_popups(true, n.max(1));
+    write_preview(
+        || render_glass_navrow(n.max(1)),
+        &format!("reprisekit-gallery-glass-navrow@{}.png", n.max(1)),
+    );
     write_preview(
         || render_calendar_events(n.max(1)),
         &format!("reprisekit-gallery-calendar-events@{}.png", n.max(1)),
@@ -722,6 +726,10 @@ fn write_pages(with_blue: bool, names: &[Option<&str>]) {
         write_preview(render_glass, "reprisekit-gallery-glass.png");
         write_preview(render_glass_dark, "reprisekit-gallery-glass-dark.png");
         write_preview(render_glass_scale2, "reprisekit-gallery-glass-scale2.png");
+        write_preview(
+            || render_glass_navrow(1),
+            "reprisekit-gallery-glass-navrow.png",
+        );
         write_preview(render_show_desktop, "reprisekit-gallery-show-desktop.png");
         write_preview(render_taskbar_top, "reprisekit-gallery-taskbar-top.png");
         write_preview(

@@ -65,6 +65,7 @@ pub mod mixer;
 pub mod msgbox;
 pub mod multiedit;
 pub mod namebox;
+pub mod navbuttons;
 pub mod netconnect;
 pub mod newshortcut;
 pub mod notifyhistory;
