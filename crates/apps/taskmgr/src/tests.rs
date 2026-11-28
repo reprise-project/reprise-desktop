@@ -730,9 +730,70 @@ fn applications_lists_only_programs_showing_a_window() {
         },
         &mut ctx,
     );
+    let rows: Vec<(&str, Option<u64>)> = (t.app_rows.iter())
+        .map(|r| (r.unit.as_str(), r.window.as_ref().map(|w| w.id)))
+        .collect();
+    assert_eq!(
+        rows,
+        [("", Some(8888))],
+        "a host window outside every scope is a row of its own, not Notepad's scope"
+    );
+}
+
+#[test]
+fn applications_lists_a_window_whose_client_runs_in_no_app_scope() {
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.take(
+        Snapshot {
+            windows: Some(vec![
+                titled(1, "org.kde.ark", 41, ""),
+                titled(7, "reprise.calc", 7000, "Calculator"),
+                AppWindow {
+                    button: false,
+                    ..titled(8, "reprise.calc", 7000, "About")
+                },
+            ]),
+            ..snapshot()
+        },
+        &mut ctx,
+    );
+    t.event(MAIN, Event::Resized, &mut ctx);
+    assert_eq!(
+        tasks(&t),
+        ["Ark", "Calculator"],
+        "a program started outside Reprise shows its window by title; a box has no row"
+    );
+}
+
+#[test]
+fn end_task_on_a_window_in_no_app_scope_closes_it_and_offers_end_now_after_the_wait() {
+    let lone = || titled(7, "reprise.calc", 7000, "Calculator");
+    let showing = |windows: Vec<AppWindow>| Snapshot {
+        windows: Some(windows),
+        ..snapshot()
+    };
+    let mut ctx = ctx();
+    let mut t = mgr();
+    t.end_task = record_end;
+    t.close_window = record_close;
+    t.take(showing(vec![lone()]), &mut ctx);
+    t.event(MAIN, Event::Resized, &mut ctx);
+    click_row(&mut t, &mut ctx, 0);
+    t.event(MAIN, key(keysym::DELETE), &mut ctx);
+    assert_eq!(CLOSED.take(), [7], "its window is asked to close");
+    assert!(ENDED.take().is_empty(), "no scope is signalled");
+    assert!(matches!(&t.ending[..], [e] if e.target == Target::Window(String::new(), 7)));
+    t.ending[0].since -= END_WAIT;
+    t.take(showing(vec![lone()]), &mut ctx);
     assert!(
-        t.app_rows.is_empty(),
-        "a host window outside every scope lists no scope of its app id"
+        matches!(t.asks.up(), Some((_, Ask::EndNow(Target::Window(u, 7)))) if u.is_empty()),
+        "a window still up after the wait is offered End Now"
+    );
+    t.take(showing(Vec::new()), &mut ctx);
+    assert!(
+        t.asks.is_empty() && t.ending.is_empty(),
+        "done once it closed"
     );
 }
 
