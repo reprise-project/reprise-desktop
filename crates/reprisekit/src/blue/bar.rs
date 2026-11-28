@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn taskbar_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = crate::blue::Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&taskbar(v.scheme(), d)))))
             .collect();
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn tray_area_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = crate::blue::Tone::ALL
             .into_iter()
             .flat_map(|v| [1, 2].map(|d| (format!("{v:?} {d}"), fnv(&tray_area(v.scheme(), d)))))
             .collect();

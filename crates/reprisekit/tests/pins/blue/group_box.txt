@@ -18,8 +18,8 @@ Carbon 1 975acfebfd056ffc
 Carbon 2 218515876b8580c7
 Steel 1 b1b8edf39b47a2cc
 Steel 2 ddd1a36eafbe3df7
-Blue dark 1 adffc8df0ab75d4c
-Blue dark 2 90dcb78e0984d537
+Blue dark 1 1fdbb2eaa8b6df7c
+Blue dark 2 4eda026ca6346fa7
 Olive dark 1 6d604c2e4f9ea2bc
 Olive dark 2 5912f22909397607
 Silver dark 1 b1b8edf39b47a2cc

@@ -152,11 +152,11 @@ mod tests {
 
     #[test]
     fn task_button_pins_at_scale_1_and_2() {
-        let got: Vec<_> = Variant::ALL
+        let got: Vec<_> = Tone::ALL
             .into_iter()
             .flat_map(|v| {
                 [1, 2].map(|d| {
-                    let b = leading(&task_button(v.into(), d), &STATES[..5]);
+                    let b = leading(&task_button(v, d), &STATES[..5]);
                     (format!("{v:?} {d}"), fnv(&b))
                 })
             })

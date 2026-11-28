@@ -38,10 +38,10 @@ Steel StatusBar 1 46bb332e1b2df1cf
 Steel StatusPane 1 1a44e373d7d1ce2d
 Steel StatusBar 2 045501f6d6a43960
 Steel StatusPane 2 53aa96d6d037c73d
-Blue dark StatusBar 1 07f06409076ca5f6
-Blue dark StatusPane 1 5bfa3bf4532888f1
-Blue dark StatusBar 2 47372ce583704c4e
-Blue dark StatusPane 2 6a374d9f6cfbbdfd
+Blue dark StatusBar 1 319a8c176fd1f47c
+Blue dark StatusPane 1 90943d4588181716
+Blue dark StatusBar 2 0108e0ec0ad3cb82
+Blue dark StatusPane 2 0bf0fb23af623e8d
 Olive dark StatusBar 1 66a5acfcc0da061d
 Olive dark StatusPane 1 a86478beb447735e
 Olive dark StatusBar 2 59a90a19ad780025

@@ -150,10 +150,10 @@ mod tests {
         p >> 24
     }
 
-    fn each(d: i32) -> Vec<(Variant, State, Canvas)> {
+    fn each(d: i32) -> Vec<(Tone, State, Canvas)> {
         let mut out = Vec::new();
-        for v in Variant::ALL {
-            for (state, face) in frames(v.into()) {
+        for v in Tone::ALL {
+            for (state, face) in frames(v) {
                 out.push((v, state, help_box(face, d, S)));
             }
         }
@@ -322,8 +322,8 @@ mod tests {
     #[test]
     fn grown_help_box_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
-            for (state, face) in frames(v.into()) {
+        for v in Tone::ALL {
+            for (state, face) in frames(v) {
                 for side in [28, 34] {
                     for d in [1, 2] {
                         let c = help_box(face, d, side);

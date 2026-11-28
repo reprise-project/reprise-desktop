@@ -22,15 +22,15 @@ Olive 2 hot=Some(Place(1)) pressed=None ab415c4b4966f0cd
 Olive 2 hot=Some(AllPrograms) pressed=None 1f62589d174227b9
 Olive 2 hot=Some(LogOff) pressed=None 415d4636d1815d04
 Olive 2 hot=Some(Shutdown) pressed=Some(Shutdown) efd473a675c11375
-Blue dark 1 hot=None pressed=None fbb50654317cab03
-Blue dark 1 hot=Some(Program(0)) pressed=None f402434ca51abbd3
-Blue dark 1 hot=Some(Place(1)) pressed=None 2567bb17fbc174e3
-Blue dark 1 hot=Some(AllPrograms) pressed=None 59f1adc43a64305d
-Blue dark 1 hot=Some(LogOff) pressed=None e99243052a87d694
-Blue dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) 1b01e74ca93d66a8
-Blue dark 2 hot=None pressed=None 44e4ae76efbe3e98
-Blue dark 2 hot=Some(Program(0)) pressed=None 363093a88a93915c
-Blue dark 2 hot=Some(Place(1)) pressed=None 3bfce12c99e3d017
-Blue dark 2 hot=Some(AllPrograms) pressed=None db69984e3606ba98
-Blue dark 2 hot=Some(LogOff) pressed=None 14fc77197bc25073
-Blue dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) d135d31bc94b63f9
+Blue dark 1 hot=None pressed=None a19d5dda4d3a4dc6
+Blue dark 1 hot=Some(Program(0)) pressed=None c50427d05cca503c
+Blue dark 1 hot=Some(Place(1)) pressed=None f704feff783680d2
+Blue dark 1 hot=Some(AllPrograms) pressed=None c64ab2eda101bf00
+Blue dark 1 hot=Some(LogOff) pressed=None 749d27e67ab294e5
+Blue dark 1 hot=Some(Shutdown) pressed=Some(Shutdown) b459f0f04c293fc4
+Blue dark 2 hot=None pressed=None 68a0d2dcc79acf4e
+Blue dark 2 hot=Some(Program(0)) pressed=None ede4abc3c1f885a8
+Blue dark 2 hot=Some(Place(1)) pressed=None bd7f92eaf2879b80
+Blue dark 2 hot=Some(AllPrograms) pressed=None 1f00c1f6cf556704
+Blue dark 2 hot=Some(LogOff) pressed=None 8253d302de954751
+Blue dark 2 hot=Some(Shutdown) pressed=Some(Shutdown) e6de9b822abd6d09

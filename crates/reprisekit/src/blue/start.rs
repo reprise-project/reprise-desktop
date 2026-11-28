@@ -301,7 +301,7 @@ mod tests {
     #[test]
     fn start_pill_pins_at_scale_1_and_2() {
         let mut got = Vec::new();
-        for v in Variant::ALL {
+        for v in crate::blue::Tone::ALL {
             for d in [1, 2] {
                 let img = start_button(v.scheme(), d);
                 for st in STATES {
