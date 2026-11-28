@@ -16,7 +16,7 @@ The trust boundary is the Wayland socket in `$XDG_RUNTIME_DIR`. Unsandboxed clie
 - **Outputs and gamma** (`zwlr_output_manager_v1`, `zwlr_output_power_manager_v1`, `zwlr_gamma_control_manager_v1`, `reprise_output_trial_manager_v1`): changes display layout, power and gamma. Trials revert after at most 60 s and block saving display changes while active.
 - **On top** (`reprise_on_top_v1`): keeps a window above others, below [consent prompts](#consent-prompts).
 - **Reopen** (`reprise_reopen_v1`): registers up to 32 session-restore launch arguments per program in `$XDG_STATE_HOME/reprise/state.toml`.
-- **Caption** (`reprise_caption_v1`): leaves the window icon and title off a window's caption; the taskbar, Alt+Tab and the window menu still name it.
+- **Caption** (`reprise_caption_v1`): leaves the window icon and title off a window's caption; the taskbar and Alt+Tab still name it.
 
 ### Sandboxed programs
 

@@ -335,6 +335,8 @@ impl Window {
     pub fn hit_at(&self, lx: f64, ly: f64, m: &Metrics) -> FrameHit {
         match self.geom.hit(lx as i32 - self.x, ly as i32 - self.y, m) {
             FrameHit::Resize(_) if self.shaded => FrameHit::Title,
+            // A bare caption draws no icon: its place moves and maximizes like the rest.
+            FrameHit::Icon if self.bare_caption => FrameHit::Title,
             hit => hit,
         }
     }

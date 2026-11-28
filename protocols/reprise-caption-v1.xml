@@ -9,9 +9,10 @@
       One global. A program whose window names its place in its own client
       area asks for the caption Reprise draws over it to leave out the window
       icon and the title. The title still names the window everywhere else:
-      its taskbar button, the window switcher, the window menu and screen
-      readers. The caption buttons stay, and the window menu still opens on
-      Alt+Space and on a click at the caption's left end, where the icon was.
+      its taskbar button, the window switcher and screen readers. The caption
+      buttons stay; where the icon was is caption like the rest, moving the
+      window on a drag and maximizing it on a double click. The window menu
+      still opens on Alt+Space and on a right click on the caption.
     </description>
 
     <enum name="style">

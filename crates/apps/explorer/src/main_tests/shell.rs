@@ -5,6 +5,8 @@ use reprisekit::classic::widgets::FIELD_PAD;
 use reprisekit::interface::Interface;
 use reprisekit::raster::Rect;
 
+#[path = "bare_caption.rs"]
+mod bare_caption;
 #[path = "search_crumb.rs"]
 mod search_crumb;
 

@@ -364,6 +364,7 @@ impl Host {
                 self.refit(id);
             }
         }
+        self.sync_bare_captions();
     }
 }
 
