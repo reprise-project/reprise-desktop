@@ -304,3 +304,23 @@ fn the_pointer_is_an_i_beam_on_file_name_and_the_rename_box_only() {
     assert_eq!(d.shape(entry_hit(1)), Shape::Default);
     assert_eq!(d.shape(Some(Hit::Places(0))), Shape::Default);
 }
+
+#[test]
+fn open_names_the_row_a_listing_lights() {
+    let mut d = sample();
+    d.set_listing(folder(1, None, vec![file("pic.png"), file("z.png")]));
+    assert_eq!(d.file_name(), "pic.png");
+    d.set_listing(folder(3, None, vec![dir("sub"), file("a.txt")]));
+    assert_eq!(d.file_name(), "", "a lit folder empties the field");
+    let mut save = multi(DlgMode::Save, false);
+    save.set_listing(folder(2, None, vec![file("a.txt")]));
+    assert_eq!(save.file_name(), "", "Save keeps its own name");
+}
+
+#[test]
+fn a_typed_name_outlives_the_lit_row_of_the_next_folder() {
+    let mut d = sample();
+    d.set_file_name("notes.txt");
+    d.set_listing(folder(1, None, vec![file("a.txt")]));
+    assert_eq!(d.file_name(), "notes.txt");
+}

@@ -678,6 +678,15 @@ impl FileDlg {
                 self.shell.edit = None;
                 self.shell.left = 0;
                 self.shell.top = 0;
+                // Open names the file it lights, unless a name was typed to carry along.
+                let lit = (self.shell.selection.focus).and_then(|i| self.shell.entries.get(i));
+                let lit_file = lit.is_some_and(|e| !e.is_dir);
+                if self.fields.mode == DlgMode::Open && self.typed.is_empty() {
+                    match lit_file {
+                        true => self.sync_name_field(),
+                        false => self.filename.set_selected(""),
+                    }
+                }
             }
         }
         if let Some((name, rename)) = self.expected.take()
