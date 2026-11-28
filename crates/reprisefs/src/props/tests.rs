@@ -23,6 +23,7 @@ fn short_sizes_drop_the_byte_count() {
 #[test]
 fn sizes_and_counts_read_as_byte_counts() {
     assert_eq!(format_size(0), "0 bytes");
+    assert_eq!(format_size(1), "1 byte");
     assert_eq!(format_size(1023), "1023 bytes");
     assert_eq!(format_size(1260), "1.23 KB (1,260 bytes)");
     assert_eq!(format_size(12_800), "12.5 KB (12,800 bytes)");

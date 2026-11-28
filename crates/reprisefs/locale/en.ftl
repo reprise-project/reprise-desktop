@@ -149,6 +149,13 @@ ask-program-text =
 
     Do you want to run it?
 
+## A size under a kilobyte
+size-bytes =
+    { $bytes ->
+        [one] { NUMBER($bytes, useGrouping: "false") } byte
+       *[other] { NUMBER($bytes, useGrouping: "false") } bytes
+    }
+
 ## Other errors
 exec-refused = Reprise cannot run '{ $name }' safely: its command line has a field code inside quotes.
 link-no-program = Reprise cannot find the program '{ $name }'.
