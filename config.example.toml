@@ -151,8 +151,9 @@ interface = "classic"        # classic | blue | glass; an unknown value runs cla
 # opaque_when_maximized = false  # true: while a screen shows a maximized or fullscreen
 #                            # window its taskbar is opaque, and a maximized window's
 #                            # frame always is; default true under style = "onyx"
-# onyx_menu = "light"        # light | dark: the Onyx Start menu in this mode
-#                            # whatever mode says; left out, it follows mode
+# onyx_menu = "light"        # light | dark: the Onyx Start panel in this mode
+#                            # whatever mode says; left out, it follows mode.
+#                            # The menus it opens follow mode
 # notification_style = "lozenge"  # lozenge | halo (the app icon breaks out of the top-left edge, the glass washed in its colour) | droplet (one row, opens on hover)
 # orb_glow = 100             # 0 to 100: how strongly the Start button's icon glows; 0: none
 

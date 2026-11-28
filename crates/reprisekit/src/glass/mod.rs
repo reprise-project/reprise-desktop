@@ -202,7 +202,8 @@ pub const MATERIAL_ENV: &str = "REPRISE_GLASS_MATERIAL";
 /// `mode`, `material`, `frame`, `style`, `opaque_when_maximized` and `onyx_menu`. Opaque
 /// glass needs no backdrop. Defaults: Sky at 42, translucent, blur 2 with
 /// streaks, fast drag, frames behind glass shown, 30 re-blurs a second, full
-/// orb glow, light, Frosted, Rounded, Glass, glass when maximized.
+/// orb glow, light, Frosted, Rounded, Glass, glass when maximized, an Onyx
+/// Start panel in `mode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Settings {
     pub color: Color,
@@ -234,8 +235,8 @@ pub struct Settings {
     /// A maximized window's frame is opaque ([`frame::maximized`]), and so is the taskbar of
     /// an output showing one, which its host draws with [`opaque_bar`].
     pub opaque_when_maximized: bool,
-    /// The mode Onyx's Start menu draws in; None follows `mode`. Read by the Start menu's
-    /// draw ([`crate::interfaces::draw_start_panel`]), so styles are shared across it.
+    /// The mode Onyx's Start panel draws in; None follows `mode`. Only the panel's draw
+    /// ([`crate::interfaces::draw_start_panel`]) reads it; `cached` ignores it.
     pub onyx_menu: Option<Mode>,
 }
 
